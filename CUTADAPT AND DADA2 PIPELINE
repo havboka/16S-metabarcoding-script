@@ -1,0 +1,828 @@
+#--------------------------------------------------------#
+#--- Cutadapt & Dada2 Pipeline for metabarcoding data ---#
+#--------------------------------------------------------#
+
+# Code from John Pearman (john.pearman@cawthron.org.nz)
+# Altered by Jacqui Stuart for Small sub-unit (SSU) v9 data-set
+# Altered by Salvatore Campanile for 16S amplicon sequencing analysis of V4 region of 16S rRNA gene
+
+# Date 2025.07.28
+# Primer pair: 515Fm and 806Rm for V4 region of prokaryotic 16S
+#Sequenced completed by Azenta Life Science (https://www.azenta.com/)
+
+#--------------------------------------------------------------------------------------------#
+
+## Sequence Pipeline
+
+# This R script delineates a comprehensive metabarcoding data processing workflow, encompassing library installation, 
+# data organization, primer analysis, Cutadapt-based trimming, Dada2 quality checks, filtering, and chimera removal.
+# Utilizing checkpoints ensures adaptability in handling interruptions or errors.
+
+# Subsequently, the script navigates through pivotal steps: "Merging seqtab files," which consolidates tables from
+# various sequencing runs based on gene region (v9 or v4), and saves them as .rds files. The "Taxonomy" section processes merged
+# tables, metadata, and taxonomy files, crafting phyloseq objects.
+
+# Addressing contamination, the "Subtracting negative controls" segment deducts sequences from negative controls, adjusting
+# the main data accordingly. The script then eliminates zero samples, creating a new phyloseq object without negative controls.
+
+# Concluding with a comparison of count sums, the script saves the cleaned dataset as .rds and tracks removed sequences
+# in a CSV. It culminates by emphasizing the preparedness of the cleaned data for community and diversity analysis.
+
+#------------------------------------------------------------------------------------------------------------------------------#
+
+#--- Library installation and setup ---#
+# Installs BiocManager if don't already have it
+# DO NOT INSTALL AGAIN IF YOU HAVE IT...STUFF BREAKS
+
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.21")
+
+# Install phyloseq & dada2
+# DO NOT INSTALL AGAIN IF YOU HAVE IT...STUFF BREAKS
+
+BiocManager::install("phyloseq")
+BiocManager::install("dada2", force = TRUE)
+BiocManager::install("ShortRead", force = TRUE)
+
+# Loading libraries
+
+library("phyloseq")
+library("ggplot2")
+library("ShortRead")
+library("Biostrings")
+library("dada2")
+library("dplyr")
+
+# Set working directory (choose the right folder and oth the reads)
+# If you are working with an external server (aka using RStudio from edge or google) it is important to upload the files through a compressed folder. 
+# You can do that by clicking "files" and then upload" on the top of the right bottom panel.
+
+#Skkip the nex few lines if you are working on a computer where your directory is
+
+
+path <- "/home/salvatorecampanile/raw data results dna extraction 16S antarctica 2024" # sequence files #cutadapt does not recognize the tilde (~) as a function/directory, that meas you have to substitute that as /home/ etc (get the right name of your directory)
+list.files(path)
+path
+
+list.files(path, all.files = TRUE)
+
+file.choose()
+
+# List names of forward and reverse reads
+fnFs <- sort(list.files(path, pattern = "_L1_1.fq.gz$", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern = "_L1_2.fq.gz$", full.names = TRUE))
+
+# View the list of names
+fnFs
+fnRs
+
+#--- Primer pair setup and checking ---#
+
+# This code specifies the primer pair used for your sequencing run. 
+
+FWD <- "GTGYCAGCMGCCGCGGTAA" #FORWARD: 515Fm V4 region
+REV <- "GGACTACNVGGGTWTCTAAT" #REVERSE: 806Rm V4 region
+
+#The next few steps are useful to check (before and after trimming) the presence of your primers in your sequencing data. 
+
+#Here we find the forward and reverse compliments of primers in all sequences
+allOrients <- function(primer) {
+  
+  
+  # Then create all orientations of the input sequence (primers)
+  require(Biostrings)
+  
+  dna <- DNAString(primer)  # The Biostrings works w/ DNAString objects rather than character vectors
+  orients <- c(
+    Forward = dna, 
+    Complement = complement(dna), 
+    Reverse = reverse(dna), 
+    RevComp = reverseComplement(dna)
+  )
+  return(sapply(orients, toString))  # Convert back to character vector
+}
+
+
+
+FWD.orients <- allOrients(FWD)
+REV.orients <- allOrients(REV)
+
+
+FWD.orients
+
+
+# This says how many times the primers are found, and in what orientation
+primerHits <- function(primer, fn) {
+  # Counts number of reads in which the primer is found
+  nhits <- vcountPattern(primer, sread(readFastq(fn)), fixed = FALSE)
+  return(sum(nhits > 0))
+}
+
+rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fn = fnFs[[1]]), 
+      REV.ReverseReads = sapply(REV.orients, primerHits, fn = fnRs[[1]]))
+
+# At this point you are hoping for all reads, or the vast majority, to be in the forward direction.
+# If this is not the case, find Johnny P and grill him about why...it's most likely a you problem
+# But he will know where to direct you to solve it.
+
+#--- finds and sets up cutadapt --- #
+
+#let's check first if cutadat is present on this server:
+
+system("cutadapt --version")
+
+#if the console gives you an error, that means cutadapt is not installed. You need an eternal extension to run that program and then installing it on R to make it work properly. Miniconda would be the best choice for it.
+
+system("conda install -c bioconda cutadapt -y")
+
+#if still it is unable to recognize cutadapt, make sure the person who runs the server can install that for you
+#In that case, open a new terminal where you can easily install miniconda and THEN cutadapt ON YOUR SCRIPT always for the last version of cutadapt
+
+cutadapt <- "/home/salvatorecampanile/miniconda3/bin/cutadapt"
+
+# Run shell commands from R and check for the right version
+system2(cutadapt, args = "--version")
+
+# This code determines the new file path for the cutadapt folder/files you are creating
+path.cut <- file.path(path, "Antarctica16S_cutadapt_trimmed_reads")
+if(!dir.exists(path.cut)) dir.create(path.cut) #does it exist, if it doesn't then make it
+
+fnFs.cut <- file.path(path.cut, paste0(tools::file_path_sans_ext(basename(fnFs)), "_trimmed_F.fq.gz")) #it just removes one extension, so be careful while making plots and saving them as a png file!!!
+fnRs.cut <- file.path(path.cut, paste0(tools::file_path_sans_ext(basename(fnRs)), "_trimmed_R.fq.gz"))
+
+#--- Trimming primer sequences off all reads ---#
+
+# Trim FWD off of R1 (forward reads) - 
+R1.flags <- paste0("-g", FWD)
+
+# Trim REV off of R2 (reverse reads)
+R2.flags <- paste0("-G", REV) 
+
+
+#--- Run Cutadapt ---#
+# This step can take some time
+
+for (i in seq_along(fnFs)) {
+  system2(cutadapt, args = c(
+    "-e", "0.08",
+    "--discard-untrimmed",
+    R1.flags,
+    R2.flags,
+    "-o", shQuote(fnFs.cut[i]),   # output forward read
+    "-p", shQuote(fnRs.cut[i]),   # output reverse read
+    shQuote(fnFs[i]),             # input forward read (quoted!)
+    shQuote(fnRs[i])              # input reverse read (quoted!)
+  ))
+}
+
+#Keep in mind that before this you needed to change your initial directory, cutadapt does not recognize the tilde symbol
+
+# You will now have a new 'cutadapt16S' folder within the folder your sequences are in.
+# These have had the primers trimmed off each sequence.
+# Next you are making sure the primer sequences have been removed and that you still have the same amount of files.
+
+# Re-Check how many files still contain the primers after running cutadapt: 
+rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fn = fnFs.cut[[1]]), 
+      REV.ReverseReads = sapply(REV.orients, primerHits, fn = fnRs.cut[[1]])) #the result of this after running should be a table with all 0 (or almost all 0s) on it)
+
+
+# Identify the forward and reverse fastq filenames have the format:
+
+path.cut <- "Antarctica16S_cutadapt_trimmed_reads"
+
+dir.exists(path.cut)
+list.files(path.cut)
+
+cutFs <- sort(list.files(path.cut, pattern = "R1_001.fastq.gz", full.names = TRUE))
+cutRs <- sort(list.files(path.cut, pattern = "R2_001.fastq.gz", full.names = TRUE))
+
+
+# Check that the number of forward and reverse files are still the same:
+if(length(cutRs) == length(cutRs)) print("Forward and reverse files match. Go forth and explore")
+if (length(cutRs) != length(cutRs)) stop("Forward and reverse files do not match. Better go back and have a check") #of course, check the console and what it is saying, this last line should not give you back anything
+
+# Extract sample names, assuming filenames have format:
+
+length(cutFs) #run this to make sure cutFs is not empty.If it returns 0, that means no files were found. 
+#You may need to fix your list.files() command. Proceed to the next command, otherwise skip to get.sample.name etc.
+
+list.files(path.cut, pattern = "trimmed_F.fq.gz", full.names = TRUE)
+
+#If that works, assign it
+cutFs <- sort(list.files(path.cut, pattern = "trimmed_F.fq.gz", full.names = TRUE))
+
+get.sample.name <- function(fname) strsplit(basename(fname), "_")[[1]][1] # Define a function to extract sample names from filenames
+sample.names <- unname(sapply(cutFs, get.sample.name)) # Apply the function to each filename in cutFs 
+head(sample.names) # View the first few sample names
+
+#Check sample names
+sample.names
+
+#this entire code above is necessary to discriminate the names of the samples and not the complete file names
+
+#----------------------#
+##### STOP POINT 1 #####
+#----------------------#
+# This stop point is designed to save the work-space environment so you can pick up from here later if needed.
+# It means you do not have to run the above code again and also just worth saving sometimes in case shit goes awry
+
+
+# generate folder in working directory for saved environments
+folder_name <- "workspace_environments_16S_analysis"
+dir.create(folder_name)
+
+# generate dynamic file name to track iterations
+current_datetime <- format(Sys.time(), "%Y-%m-%d_%H-%M")
+file_name_stop1 <- paste0("/home/salvatorecampanile/",current_datetime,"_antarctica16S_phase1", ".RData")
+
+# save workspace environment
+save.image(file = file_name_stop1)
+
+
+#--- LOAD WORKSPACE ENVIRONMENT ---#
+
+# Make sure you update this file link as you save out your stop point files.
+load("/home/salvatorecampanile/2025-08-05_15-58_antarctica16S_phase1.RData")
+
+ls()
+
+list.files(cutFs)
+
+
+#--- Dada2 - Quality Checking ---#
+require(dada2)
+require(ggplot2)
+
+if(length(cutFs) <= 20) {
+  fwd_qual_plots <- plotQualityProfile(cutFs) +
+    scale_x_continuous(breaks=seq(0,250,10)) +
+    scale_y_continuous(breaks=seq(0,40,2)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  rev_qual_plots <- plotQualityProfile(cutRs) +
+    scale_x_continuous(breaks=seq(0,250,10)) +
+    scale_y_continuous(breaks=seq(0,40,2)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+} else {
+  rand_samples <- sample(size = 20, 1:length(cutFs)) # grab 20 random
+  fwd_qual_plots <- plotQualityProfile(cutFs[rand_samples]) +
+    scale_x_continuous(breaks=seq(0,250,10)) +
+    scale_y_continuous(breaks=seq(0,40,2)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  rev_qual_plots <- plotQualityProfile(cutRs[rand_samples]) +
+    scale_x_continuous(breaks=seq(0,250,10)) +
+    scale_y_continuous(breaks=seq(0,40,2)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+}
+
+#before running this (if you reload your workspace), please make sure you run again your cut
+
+# Shows the plotted quality profiles
+fwd_qual_plots
+rev_qual_plots  
+
+# Good idea to export plots as images for later, you never know when you might need to whip them out.
+ #this chunk above is useful if you want to quickly check 20 random files and what they look like. From now on we will try to get every single plot from EVERY SINGLE FILE and attempt to download all of them
+
+library(dada2)
+library(ggplot2)
+
+print(fq_file)
+print(file.exists(fq_file))  # Should be TRUE
+print(file.size(fq_file))    # Should be > 0 (non-empty file)
+
+length(cutFs)
+print(cutFs[1])
+file.exists(cutFs[1])
+file.size(cutFs[1])
+
+library(dada2)
+plotQualityProfile(cutFs[1])
+
+for (fq_file in cutFs) {
+  sample_name <- tools::file_path_sans_ext(basename(fq_file))
+  message("Plotting: ", sample_name)
+  
+  tryCatch({
+    p <- plotQualityProfile(fq_file) +
+      ggtitle(paste("Quality profile:", sample_name)) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+    
+    print(p)  # This shows the plot in the Plot panel
+    Sys.sleep(2)  # Wait 2 seconds before next plot
+  }, error = function(e) {
+    message("Error plotting ", sample_name, ": ", e$message)
+  })
+}
+
+
+output_dir <- "/home/salvatorecampanile/quality_plots"
+dir.create(output_dir, showWarnings = FALSE)
+
+fq_file <- cutFs[1]
+sample_name <- strsplit(basename(fq_file), "_")[[1]][1]
+plot_path <- file.path(output_dir, paste0(sample_name, "_quality_plot.png"))
+
+p <- plotQualityProfile(fq_file) +
+  ggtitle(paste("Quality profile:", sample_name)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+print(p)  # This should show the plot in the Plots tab
+ggsave(filename = plot_path, plot = p, width = 12, height = 6, dpi = 200)
+
+message("Saved plot: ", plot_path)
+
+#now let's try to save them as png files
+
+library(dada2)
+library(ggplot2)
+
+output_dir <- "/home/salvatorecampanile/quality_plots"
+dir.create(output_dir, showWarnings = FALSE)
+
+for(i in seq_along(cutFs)) {
+  fq_file <- cutFs[i]
+  sample_name <- strsplit(basename(fq_file), "_")[[1]][1]
+  plot_path <- file.path(output_dir, paste0(sample_name, "_quality_plot.png"))
+  
+  if(!file.exists(fq_file)) {
+    message("File not found: ", fq_file)
+    next
+  }
+  
+  tryCatch({
+    # Generate the plot object but don't print yet
+    p <- plotQualityProfile(fq_file) +
+      ggtitle(paste("Quality profile:", sample_name)) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+    
+    # Open PNG device explicitly
+    png(filename = plot_path, width = 1200, height = 600, res = 200)
+    print(p)  # print inside device
+    dev.off() # close device
+    
+    message("Saved plot: ", plot_path)
+  }, error = function(e) {
+    message("Error processing ", sample_name, ": ", e$message)
+  })
+}
+
+
+#reverse reads quality plots (same script as before)
+
+library(dada2)
+library(ggplot2)
+
+output_dir <- "/home/salvatorecampanile/quality_plots_reverse"
+dir.create(output_dir, showWarnings = FALSE)
+
+for(i in seq_along(cutRs)) {
+  fq_file <- cutRs[i]
+  sample_name <- strsplit(basename(fq_file), "_")[[1]][1]
+  plot_path <- file.path(output_dir, paste0(sample_name, "_quality_plot_R.png"))
+  
+  if(!file.exists(fq_file)) {
+    message("File not found: ", fq_file)
+    next
+  }
+  
+  tryCatch({
+    # Generate the plot object but don't print yet
+    p <- plotQualityProfile(fq_file) +
+      ggtitle(paste("Quality profile:", sample_name)) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+    
+    # Open PNG device explicitly
+    png(filename = plot_path, width = 1200, height = 600, res = 200)
+    print(p)  # print inside device
+    dev.off() # close device
+    
+    message("Saved plot: ", plot_path)
+  }, error = function(e) {
+    message("Error processing ", sample_name, ": ", e$message)
+  })
+}
+
+
+#NOW ALL THESE FREAKING FILES ARE SAVED AS PNG, THANKS JESUS 
+
+#generate dynamic file name to track iterations
+current_datetime <- format(Sys.time(), "%Y-%m-%d_%H-%M") # This tags the date and time into the generated file
+#This creates a file name with the date and time tag for this stop point
+file_name_stop2 <- paste0("/home/salvatorecampanile/",current_datetime,"_antarctica16S_phase2",".RData")
+#saves work space environment
+save.image(file = file_name_stop2)
+
+
+
+
+#_____________________________________________________________________________________________________________________
+
+
+#--- LOAD WORKSPACE ENVIRONMENT ---#
+### CHANGE ME ###
+# Make sure you update this file link as you save out your stop point files.
+load("/home/salvatorecampanile/2025-08-06_16-39_antarctica16S_phase2.RData")
+
+#--- Filtering and trimming ---#
+
+filtpathF <- file.path(path.cut, "filtered", basename(cutFs))
+filtpathR <- file.path(path.cut, "filtered", basename(cutRs))
+
+out <- filterAndTrim(
+  cutFs, filtpathF,         # Forward reads: input and output paths
+  cutRs, filtpathR,         # Reverse reads: input and output paths
+  truncLen=c(225,225),    # Truncate forward and reverse reads to length XXX and YYY
+  maxEE=c(2,4),             # Max expected errors (lower = more stringent)
+  truncQ=2,                 # Truncate reads at first base with quality < 2
+  maxN=0,                   # Discard reads with ambiguous bases (N)
+  rm.phix=TRUE,             # Remove reads matching PhiX genome (control spike-in)
+  compress=TRUE,            # Compress output fastq
+  verbose=TRUE,             # Show progress
+  multithread=TRUE          # Use multiple cores
+)
+
+
+
+sample.names <- sapply(strsplit(basename(filtpathF), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
+sample.namesR <- sapply(strsplit(basename(filtpathR), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
+
+if(identical(sample.names, sample.namesR)) {
+  print("Files are still matching.....congratulations")
+} else {
+  stop("Forward and reverse files do not match.")}
+
+names(filtpathF) <- sample.names  #add names to the forward files
+names(filtpathR) <- sample.namesR  #add names to the reverse files
+
+
+set.seed(100) # set seed to ensure that randomized steps are replicable
+
+
+#--- Learn forward error rates ---#
+
+
+# This can take time, go get a coffee, get out for a run or something
+errF <- learnErrors(filtpathF, nbases=1e8, multithread=TRUE, verbose = TRUE)
+## 100285500 total bases in 668570 reads from 24 samples will be used for learning the error rates.
+
+
+#--- Learn reverse error rates ---#
+# This will also take time, so maybe crack into some writing since you're all caffeinated or exercised.
+errR <- learnErrors(filtpathR, nbases=1e8, multithread=TRUE, verbose = TRUE)
+
+#--- Plotting forward error rates ---#
+#Forward
+errF_plot <- plotErrors(errF, nominalQ=TRUE)
+errF_plot
+
+#--- Plotting reverse error rates ---#
+#Reverse
+errR_plot <- plotErrors(errR, nominalQ=TRUE)
+errR_plot
+
+#want to save your plots? try run this one then:
+ggsave("errF_plot.png", errF_plot, width = 8, height = 5, dpi = 300)
+ggsave("errR_plot.png", errR_plot, width = 8, height = 5, dpi = 300)
+
+
+##### STOP POINT 3 #####
+#--- Here you can save the work-space environment and pick up from here later if needed ---#
+#--- This means you do not have to run the above code again
+#--- Also just worth saving sometimes in case computer crashes
+
+
+#generate dynamic file name to track iterations
+current_datetime <- format(Sys.time(), "%Y-%m-%d_%H-%M")
+file_name_stop3 <- paste0("/home/salvatorecampanile/",current_datetime,"_Antarctica16S_phase3", ".RData")
+
+#save workspace environment
+save.image(file = file_name_stop3)
+
+
+
+#----------------------------------------------#
+##### PROCESSING STEP 4 - Chimera removal ######
+#----------------------------------------------#
+
+#--- LOAD WORKSPACE ENVIRONMENT ---#
+### CHANGE ME ###
+# Make sure you update this file link as you save out your stop point files.
+load("/home/salvatorecampanile/2025-08-07_16-26_Antarctica16S_phase3.RData")
+
+
+#----- Chimera removal -----#
+# This code performs the de-replication of sequences in a FASTQ file specified by 'filtpathF' using the 'derepFastq()' function. 
+# The resulting de-replicated data is stored in the variable 'derepF' or 'derepR'. 
+# The 'verbose=TRUE' argument is used to display detailed progress information during the de-replication process.
+
+derepF <- derepFastq(filtpathF, verbose=TRUE)
+derepR <- derepFastq(filtpathR, verbose=TRUE)
+
+
+#--- Checkpoint 4 ---#
+#--- This is just to ensure saving of those longer processes, as sometimes the computer crashes after this point.
+#generate dynamic file name to track iterations
+  
+current_datetime <- format(Sys.time(), "%Y-%m-%d_%H-%M")
+file_name_stop3 <- paste0("/home/salvatorecampanile/",current_datetime,"_Antarctica16S_phase4_after_dereplication", ".RData")
+
+
+#save workspace environment
+save.image(file = file_name_stop4_checkpoint)
+
+#--------------------#
+
+
+# This code does the de-noising and chimera removal of amplicon sequence data using the 'dada()' function from the dada2 package. 
+# The de-replicated data ('derepF' or 'derepR'), an error model ('errF' or 'errR'), and other parameters are provided as input to the function. 
+# The de-noised sequences and related information are stored in the 'dadaF.pseudo' or 'dadaR.pseudo' object.
+
+dadaF.pooled <- dada(derepF, err=errF, multithread=TRUE, pool=TRUE) #CHANGED FROM POOL+"PSEUDO" TO POOL+"TRUE" to get a better recognition of smaller taxa
+
+# THIS BIT TAKES A LOOOOOONG TIME ^
+
+dadaF.pooled #check this for mental heath, should give 157 lines
+names(dadaF.pooled) #this as well
+
+
+dadaR.pooled <- dada(derepR, err=errR, multithread=TRUE, pool=TRUE) #same as above
+
+
+# THIS BIT TAKES A LOOOOOONG TIME ^
+
+dadaR.pooled #check this just in case (should be 157 objcts)
+names(dadaR.pooled)
+length(dadaR.pooled)
+
+# Merging of paired-end amplicon sequence reads using the 'mergePairs()' function from the dada2 package. 
+# The de-noised and de-replicated forward and reverse reads, along with specified parameters, are provided as input. 
+# The merged sequences and related information are stored in the mergers object.
+
+mergers <- mergePairs(dadaF.pooled, #denoised froward reads
+                      derepF, #dereplicated forward reads
+                      dadaR.pooled, #denoised reverse reads
+                      derepR, #dereplicated reverse reads
+                      maxMismatch = 1, # Allow up to 1 mismatch in the overlap region
+                      minOverlap = 10, # Require at least 10 bp overlap
+                      verbose=TRUE) # Show progress/output for each sample
+
+# THIS TAKES A WHILE TOO  ^
+
+
+# line of code creates a sequence table (seqtab) from the merged amplicon sequences stored in the mergers object. 
+# The sequence table provides information about the abundance of each unique sequence in the merged data, 
+# allowing further analysis and downstream processing.
+
+seqtab <- makeSequenceTable(mergers)
+
+# Splits the name of a file or directory specified by path using the "-" character as the delimiter. 
+# It then extracts the first two elements from each split part and stores them in the split.dir variable. 
+
+split.dir <- sapply(strsplit(basename(path), "-"), `[`, 1:2)
+
+# Combines the first and second elements from the `split.dir` variable into a single string, 
+# separated by a period, and stores it in the `split.dir.name` variable.
+
+split.dir.name  <- paste(split.dir[1], split.dir[2], sep=".")
+
+
+# saves the R object `seqtab` as an RDS file, using the constructed file path and name that
+# includes the directory path, base name, and a combination of split parts from `split.dir.name`.
+
+saveRDS(seqtab, paste0(path, "seqtab", split.dir.name,".rds"))
+
+# generates a frequency table that shows the distribution of sequence lengths in the `seqtab` object. 
+# It counts the number of sequences with each length and provides a summary of their occurrence
+
+table(nchar(getSequences(seqtab)))
+
+# generates a histogram that visualizes the distribution of sequence lengths in the `seqtab` object. 
+# It plots the frequency of different sequence lengths on the x-axis and the count or density on the y-axis, 
+# providing an overview of the distribution pattern
+
+hist(nchar(getSequences(seqtab)), main="Distribution of sequence lengths")
+
+# filters the columns of the `seqtab` object based on the character length of their column names.
+# It selects and retains only the columns with column names whose length is within your designated range.
+### CHANGE ME ### the numbers in `seq(000,000)` to represent the expected character range for your sequences. 
+# The resulting subset is assigned back to the `seqtab` object, effectively updating it with the filtered columns.
+seqtab <- seqtab[,nchar(colnames(seqtab)) %in% seq(246,260)]
+
+#  applies the `removeBimeraDenovo()` function to the `seqtab` object to remove chimeric sequences. 
+# It utilizes multiple threads for faster computation and provides detailed output during the process. 
+# The resulting sequence table without chimeras is assigned to the `seqtab.nochim` variable.
+seqtab.nochim <- removeBimeraDenovo(seqtab, multithread=TRUE, verbose=TRUE)
+
+output_dir <- "/home/salvatorecampanile/merged and chimera free files"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+
+
+### CHANGE ME ###
+# make sure I match your file path to your working folder for this project
+# You are saving a copy of the chimera free sequence table to your working directory
+saveRDS(seqtab.nochim, "/home/salvatorecampanile/merged and chimera free files/seqtab.nochim.rds")
+
+
+
+##### STOP POINT 4 #####
+#--- Here you can save the work-space environment and pick up from here later if needed ---#
+#--- This means you do not have to run the above code again
+#--- Also just worth saving sometimes in case computer crashes
+
+current_datetime <- format(Sys.time(), "%Y-%m-%d_%H-%M")
+file_name_phase4 <- paste0("/home/salvatorecampanile/",current_datetime,"_Antarctica16S_phase4_after_merging_and_chimera_removal", ".RData")
+
+
+#save workspace environment
+save.image(file = file_name_phase4)
+
+
+#------------------------------------------------------------------------------------------------------------------------------#
+### Mergin seqtab files ###
+
+# This is to be run when you have multiple sequencing runs that were split to run through the your pipeline
+# Only merge seqtab files of the same gene region
+# Next step after this is taxonomy
+
+#--- Set working directory ---#
+setwd("C:/Users/user/Documents/R") #CHANGE ME
+
+#--- Read in seqtab files ---#
+# Here I am defining the name of each data table `seqtab.nochim.file.name` 
+# The reading in the existing sequence table for each sequence run using `readRDS()`
+# make sure to change the file path to match where your files are!
+
+# v9 region sequence tables
+seqtab.nochim.CAW.23.21 <- readRDS("C:/Users/user/Documents/R/CAW-23-21_v9_seqtab.nochim.rds") # CHANGE ME
+
+#----------------------------#
+##### Merge seqtab files #####
+#----------------------------#
+
+# define input table groups
+v9_tables <- list(seqtab.nochim.CAW.22.11, seqtab.nochim.CAW.23.21)  # CHANGE ME
+
+# Merge all v9 region sequence tables
+v9.seqtab.merge <- mergeSequenceTables(tables = v9_tables)  # CHANGE ME
+#check new file rownames order
+rownames(v9.seqtab.merge)  # CHANGE ME
+
+# Save `.rds` file of each merged table to working directory
+saveRDS(v9.seqtab.merge, "C:/Users/user/Documents/R/2023-06-01_v9_merged-seqtab.nochim.rds")  # CHANGE ME
+
+# Now you should have a new merged sequence table in your working directory, or the filepath you defined above
+# Woohoo, all done.
+
+#------------------------------------------------------------------------------------------------------------------------------#
+### Taxonomy ###
+# Here we combine the taxonomy and sample metadata files and
+# remove negative control sample data from the data set. Then you will have a delightful clean data-set
+# You need to have a metadata file at this point that will have all the base information associated with your sequenced samples. 
+
+
+#--- Read in data ---#
+### CHANGE ME: Make sure file path and name is correct!!!
+
+#--- V4 ---#
+# read in `seqtab.nochim` file from your working directory
+v4.seqtab.nochim <- readRDS("/home/salvatorecampanile/merged and chimera free files/seqtab.nochim.rds")  #Loads the merged, chimera-free ASV table
+
+# read in metadata
+v4.metadata <- read.csv("/home/salvatorecampanile/SIPL sampling Antarctica 2024.csv", header = TRUE, row.names = 1) #Loads your sample metadata CSV
+
+# assign taxonomy once you have uploaded the database on your main directory
+v4.taxonomy <- assignTaxonomy(
+  seqtab.nochim,
+  "/home/salvatorecampanile/silva_nr99_v138.2_toSpecies_trainset.fa.gz",
+  multithread = TRUE
+)
+
+# Save it so you can load it later (then the `readRDS()` line will make sense)
+saveRDS(v4.taxonomy, "/home/salvatorecampanile/v4.taxonomy.rds")
+
+
+# read in taxonomy
+v4.taxonomy <- readRDS("/home/salvatorecampanile/v4.taxonomy.rds") #Loads the assigned taxonomy for your ASVs
+
+# check that sample names in the ASV table match metadata
+
+#first of all, if you need to trim the name of your samples, you can simply run this bunch of lines:
+# Clean the sample names to retain only the first two parts split by "-"
+clean_names <- sapply(strsplit(rownames(v4.seqtab.nochim), "-"), function(x) paste(x[1], x[2], sep = "-")) #this is for the nochim files
+
+# Assign the cleaned names back to the sequence table
+rownames(v4.seqtab.nochim) <- clean_names
+
+
+#NOW CHECK IT AGAIN
+
+#This returns the list of sample names (usually from your sequencing files) that are used as row names in your chimera-free sequence table.
+rownames(v4.seqtab.nochim) 
+
+#  This returns the list of sample names from your metadata CSV file, usually containing things like sample type, location, treatment, etc.
+rownames(v4.metadata)
+
+# run this to check if their names match before doing any analysis
+all(rownames(v4.seqtab.nochim) %in% rownames(v4.metadata)) #if it comes out FALSE you need to change one of the two (check above)
+
+
+#now we can finally merge the threee files linking my samples, the table with all the infrmations anf finally the dataset we would like to use:
+
+library(phyloseq) #upload this again if necessary
+
+v4 <- phyloseq(
+  otu_table(v4.seqtab.nochim, taxa_are_rows = FALSE),
+  sample_data(v4.metadata),
+  tax_table(v4.taxonomy)
+)
+
+rank_names(v4) #necessary to check all the taxa division
+
+#------------------------------------------------------------#
+##### Subtracting plastidial and mithocondria sequences ######
+#------------------------------------------------------------#
+
+#### this first chunk is to calculate the percentage of mitochondria and chloroplast in each sample (blanks included)
+#this may be useful in the future for other studies or investigations
+
+
+# Mito only
+mito <- subset_taxa(v4, Family == "Mitochondria")
+mito_counts <- sample_sums(mito)
+
+# Chloro only
+chloro <- subset_taxa(v4, Order == "Chloroplast")
+chloro_counts <- sample_sums(chloro)
+
+# Total counts per sample
+total_counts <- sample_sums(v4)
+
+# Percentages
+percent_mito <- (mito_counts / total_counts) * 100
+percent_chloro <- (chloro_counts / total_counts) * 100
+
+# Combine into a data frame
+percent_df <- data.frame(
+  Sample = names(total_counts),
+  Percent_Mitochondria = percent_mito,
+  Percent_Chloroplast = percent_chloro
+)
+
+percent_df
+
+#and save as an exel file   # If you don't have writexl installed yet, run:
+install.packages("writexl")
+
+library(phyloseq)
+library(dplyr)
+
+# Total reads per sample
+total_reads <- sample_sums(v4)
+
+# Mitochondria reads
+mito_only <- subset_taxa(v4, Family == "Mitochondria")
+mito_reads <- sample_sums(mito_only)
+
+# Chloroplast reads
+chloro_only <- subset_taxa(v4, Order == "Chloroplast")
+chloro_reads <- sample_sums(chloro_only)
+
+# Create data frame with all values (fill NAs with 0)
+read_summary <- data.frame(
+  Sample = names(total_reads),
+  Total_Reads = total_reads,
+  Mito_Reads = mito_reads[names(total_reads)],
+  Chloro_Reads = chloro_reads[names(total_reads)]
+) %>%
+  mutate(
+    Mito_Reads = ifelse(is.na(Mito_Reads), 0, Mito_Reads),
+    Chloro_Reads = ifelse(is.na(Chloro_Reads), 0, Chloro_Reads),
+    Mito_Percent = round((Mito_Reads / Total_Reads) * 100, 2),
+    Chloro_Percent = round((Chloro_Reads / Total_Reads) * 100, 2),
+    Total_Percent = round(Mito_Percent + Chloro_Percent, 2)
+  )
+
+# View table
+print(read_summary)
+
+# Save to CSV (Excel-friendly)
+write.csv(read_summary, "/home/salvatorecampanile/mito_chloro_summary.csv", row.names = FALSE)
+                          
+chloroplast_asvs <- subset_taxa(v4, Order == "Chloroplast")
+tax_table(chloroplast_asvs)
+
+
+#---------------------------------------#
+##### Subtracting negative controls #####
+#---------------------------------------#
+
+# This code segment subtracts sequences found in the negative control samples
+# from all samples to account for contamination.
+
+
+# TO BE CONTINUED
+
