@@ -2,6 +2,7 @@
 #--- Cutadapt & Dada2 Pipeline for metabarcoding data ---#
 #--------------------------------------------------------#
 
+
 # Code from John Pearman (john.pearman@cawthron.org.nz)
 # Altered by Jacqui Stuart for Small sub-unit (SSU) v9 data-set
 # Altered by Salvatore Campanile for 16S amplicon sequencing analysis of V4 region of 16S rRNA gene
@@ -810,10 +811,116 @@ read_summary <- data.frame(
 print(read_summary)
 
 # Save to CSV (Excel-friendly)
-write.csv(read_summary, "/home/salvatorecampanile/mito_chloro_summary.csv", row.names = FALSE)
+write.csv(read_summary, "/home/salvatorecampanile/mito_chloro_summary.csv", row.names = FALSE) #this can be manipulated on excel also to make plots and to export for a better visualization
                           
+
+# List all ASVs assigned to Chloroplast
+
 chloroplast_asvs <- subset_taxa(v4, Order == "Chloroplast")
 tax_table(chloroplast_asvs)
+
+### This next chunks allow us to IDENTIFY and SEARATE chloroplast and mitochondria ASVs
+### It saves our reads as two separate .csv files (one for chloroplasts and one for mitochondria) for further analysis
+### Finally, it removes all these sequences from our data and clean them from contaminants (mitho and chloro etc) and returns the objects withou any eukaryotic material
+
+#  Required library
+library(phyloseq) #upload it again just in case
+
+# 1. Extract Chloroplast and Mitochondria ASVs
+chloroplast_asvs <- subset_taxa(v4, Order == "Chloroplast")
+mitochondria_asvs <- subset_taxa(v4, Family == "Mitochondria")
+
+# 2. Create output folders (if not already existing)
+dir.create("chloroplast_reads_per_sample", showWarnings = FALSE)
+dir.create("mitochondria_reads_per_sample", showWarnings = FALSE)
+
+# 3. Export chloroplast reads per sample
+chloroplast_otu <- as.data.frame(otu_table(chloroplast_asvs))
+if (taxa_are_rows(chloroplast_asvs)) {
+  chloroplast_otu <- t(chloroplast_otu)
+}
+
+for (sample in rownames(chloroplast_otu)) {
+  sample_data_vector <- chloroplast_otu[sample, , drop = FALSE]
+  write.csv(sample_data_vector,
+            file = paste0("chloroplast_reads_per_sample/", sample, "_chloroplast_reads.csv"))
+}
+
+# 4. Export mitochondrial reads per sample
+mitochondria_otu <- as.data.frame(otu_table(mitochondria_asvs))
+if (taxa_are_rows(mitochondria_asvs)) {
+  mitochondria_otu <- t(mitochondria_otu)
+}
+
+for (sample in rownames(mitochondria_otu)) {
+  sample_data_vector <- mitochondria_otu[sample, , drop = FALSE]
+  write.csv(sample_data_vector,
+            file = paste0("mitochondria_reads_per_sample/", sample, "_mitochondria_reads.csv"))
+}
+
+#just in case, let's save them in a .rds file, which are going to be readable by Rstudio much better:
+
+# Subset chloroplast reads
+phy_chloro_reads <- subset_taxa(v4, Order == "Chloroplast")
+
+# Subset mitochondrial reads
+phy_mito_reads <- subset_taxa(v4, Family == "Mitochondria")
+
+# Define paths to folders
+chloroplast_folder <- "/home/salvatorecampanile/chloroplast_rds"
+mitochondria_folder <- "/home/salvatorecampanile/mitochondria_rds"
+
+# Create folders if they don't exist
+dir.create(chloroplast_folder, showWarnings = FALSE)
+dir.create(mitochondria_folder, showWarnings = FALSE)
+
+# Save chloroplast reads per sample
+for (sample in sample_names(phy_chloro_reads)) {
+  sample_data_phy <- prune_samples(sample, phy_chloro_reads)
+  saveRDS(sample_data_phy, file = file.path(chloroplast_folder, paste0(sample, "_chloroplast_reads.rds")))
+}
+
+# Save mitochondrial reads per sample
+for (sample in sample_names(phy_mito_reads)) {
+  sample_data_phy <- prune_samples(sample, phy_mito_reads)
+  saveRDS(sample_data_phy, file = file.path(mitochondria_folder, paste0(sample, "_mitochondria_reads.rds")))
+}
+
+my_sample <- readRDS("/home/salvatorecampanile/chloroplast_rds/C01-L1_chloroplast_reads.rds")
+
+
+#-----------------------------------------------------------------------#
+# 5. Remove chloroplast and mitochondria from the main phyloseq object
+# First, get ASV IDs of the unwanted taxa
+unwanted_taxa_ids <- union(
+  taxa_names(chloroplast_asvs),
+  taxa_names(mitochondria_asvs)
+)
+
+# Then, filter them out from your main object
+v4.cleaned <- prune_taxa(!(taxa_names(v4) %in% unwanted_taxa_ids), v4)
+
+# 6. Save the cleaned phyloseq object (optional)
+saveRDS(v4.cleaned, file = "v4.cleaned_no_chloroplast_mitochondria.rds")
+
+# Done!
+cat("Chloroplast and mitochondrial reads removed and saved per sample.\n")
+
+# Check if folders exist
+dir.exists("chloroplast_reads_per_sample")
+dir.exists("mitochondria_reads_per_sample")
+
+##### STOP POINT 5 #####
+#--- Here you can save the work-space environment and pick up from here later if needed ---#
+#--- This means you do not have to run the above code again
+#--- Also just worth saving sometimes in case computer crashes
+
+current_datetime <- format(Sys.time(), "%Y-%m-%d_%H-%M")
+file_name_phase5 <- paste0("/home/salvatorecampanile/",current_datetime,"_Antarctica16S_phase5_after_chloro_and_mito_clean_up", ".RData")
+
+
+#save workspace environment
+save.image(file = file_name_phase5)
 
 
 #---------------------------------------#
@@ -823,6 +930,90 @@ tax_table(chloroplast_asvs)
 # This code segment subtracts sequences found in the negative control samples
 # from all samples to account for contamination.
 
+library(phyloseq)
+library(dplyr)
 
-# TO BE CONTINUED
+# Load your phyloseq object if not already loaded
+
+v4.cleaned_no_chloroplast_mitochondria <- readRDS("/mnt/data/home/salvatorecampanile/raw data results dna extraction 16S antarctica 2024/v4.cleaned_no_chloroplast_mitochondria.rds")
+
+v4 <- readRDS("/mnt/data/home/salvatorecampanile/raw data results dna extraction 16S antarctica 2024/v4.cleaned_no_chloroplast_mitochondria.rds")
+
+sample_names(v4.cleaned_no_chloroplast_mitochondria)
+
+
+# Vector of blanks and their associated samples (adjusted for your exact grouping)
+blank_sample_map <- list(
+  "BLANK-01" = c("C01-L1", "C01-L2", "C01-L3", "C01-L4", "C02-L1", "C02-L2", "C02-L3", "C02-L4", "C02-L5", "C03-L1", "C03-L2", "C03-L3"),
+  "BLANK-02" = c("C03-L4", "C03-L5", "C04-L1", "C04-L2", "C04-L3", "C04-L4", "C04-L5", "C05-L1", "C05-L2", "C05-L3", "C05-L4"),
+  "BLANK-03" = c("C05-L5", "C06-L1", "C06-L2", "C06-L3", "C06-L4", "C06-L5", "C07-L1", "C07-L2", "C07-L3", "C07-L4", "C07-L5"),
+  "BLANK-04" = c("C08-L1", "C08-L2", "C08-L3", "C08-L4", "C08-L5", "C09-L1", "C09-L2", "C09-L3", "C09-L4", "C09-L5", "C10-L1"),
+  "BLANK-05" = c("C10-L2", "C10-L3", "C10-L4", "C10-L5", "C11-L1", "C11-L2", "C11-L3", "C11-L4", "C11-L5", "C12-L1", "C12-L2"),
+  "BLANK-06" = c("C12-L3", "C12-L4", "C12-L5", "C13-L1", "C13-L2", "C13-L3", "C13-L4", "C13-L5", "C14-L1", "C14-L2", "C14-L3"),
+  "BLANK-07" = c("C14-L4", "C14-L5", "C15-L1", "C15-L2", "C15-L3", "C15-L4", "C15-L5", "C16-L1", "C16-L2", "C16-L3", "C16-L4"),
+  "BLANK-08" = c("C16-L5", "C17-L1", "C17-L2", "C17-L3", "C17-L4", "C17-L5", "C18-L1", "C18-L2", "C18-L3", "C18-L4", "C18-L5"),
+  "BLANK-09" = c("C19-L1", "C19-L2", "C19-L3", "C19-L4", "C19-L5", "C20-L1", "C20-L2", "C20-L3", "C20-L4", "C20-L5", "C21-L1"),
+  "BLANK-10" = c("C21-L2", "C21-L3", "C21-L4", "C21-L5", "C22-L1", "C22-L2", "C22-L3", "C22-L4", "C22-L5", "C23-L1", "C23-L2"),
+  "BLANK-11" = c("C23-L3", "C23-L4", "C23-L5", "C24-L1", "C24-L2", "C24-L3", "C24-L4", "C24-L5", "C25-L1", "C25-L2", "C25-L3"),
+  "BLANK-12" = c("C25-L4", "C25-L5", "C26-L1", "C26-L2", "C26-L3", "C26-L4", "C26-L5", "C27-L1", "C27-L2", "C27-L3", "C27-L4"),
+  "BLANK-13" = c("C27-L5", "C28-L1", "C28-L2", "C28-L3", "C28-L4", "C28-L5", "C29-L1", "C29-L2", "C29-L3", "C29-L4", "C29-L5")
+)
+
+# Get the OTU table as a matrix for manipulation
+otu_mat <- as(otu_table(v4), "matrix")
+
+colnames(otu_mat)
+
+
+# Loop through each blank and subtract its counts from the associated samples
+for (blank in names(blank_sample_map)) {
+  
+  # Check if blank is in your sample names (now checking rownames)
+  if (!blank %in% rownames(otu_mat)) {
+    warning(paste("Blank sample", blank, "not found in the dataset. Skipping..."))
+    next
+  }
+  
+  blank_counts <- otu_mat[blank, ]  # get blank counts (row)
+  
+  # For each sample associated with this blank
+  for (sample in blank_sample_map[[blank]]) {
+    
+    # Check if sample is present
+    if (!sample %in% rownames(otu_mat)) {
+      warning(paste("Sample", sample, "not found in the dataset. Skipping..."))
+      next
+    }
+    
+    # Subtract blank counts from sample counts, no negatives allowed
+    otu_mat[sample, ] <- pmax(otu_mat[sample, ] - blank_counts, 0)
+  }
+}
+
+
+# Remove blanks from otu matrix (optional, if you want to exclude blanks from final dataset)
+otu_mat <- otu_mat[, !colnames(otu_mat) %in% names(blank_sample_map)]
+
+# Create a new phyloseq object with cleaned OTU table and original metadata + taxonomy
+v4.cleaned_no_blanks <- phyloseq(
+  otu_table(otu_mat, taxa_are_rows = FALSE),  # <- change to FALSE since samples are rows
+  sample_data(v4),
+  tax_table(v4)
+)
+
+
+# Save the new phyloseq object (optional)
+saveRDS(v4.cleaned_no_blanks, "/home/salvatorecampanile/v4.cleaned_no_blanks.rds")
+
+# Print summary
+v4.cleaned_no_blanks
+
+#and saving everything just in case everything crashes, yet again
+saveRDS(v4.cleaned_no_blanks, file = "v4.cleaned_no_blanks.rds")
+saveRDS(v4.cleaned_no_blanks, file = "/home/salvatorecampanile/v4.cleaned_no_blanks.rds")
+
+taxa_names(v4.cleaned_no_blanks)
+tax_table(v4.cleaned_no_blanks)
+
+
 
