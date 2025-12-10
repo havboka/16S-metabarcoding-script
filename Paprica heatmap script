@@ -1,0 +1,261 @@
+### HEATMAPS FOR METABOLIC INFERENCE (nitrogen pathways focused)
+
+### METABOLIC INFERENCE HEAT MAPS
+
+### attempt n1
+install.packages("sysfonts")
+
+library(sysfonts)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+#set the right working directory
+setwd("/mnt/data/home/salvatorecampanile/paprica results files")
+
+#### FOR ONE SAMPLE
+#read one sample's pathways file
+pathways_C01_L1 <- read_csv("C01-L1.bacteria.pathways.csv")
+
+colnames(pathways_C01_L1)[1] <- "Pathway" # the first column is the pathway name,  so we need to change its name if it has not been done yet
+head(pathways_C01_L1$Pathway)   # check first few pathway names
+
+#read the summary pathways files
+sum_pathways_C01_L1 <- read_csv("C01-L1.bacteria.sum_pathways.csv")
+
+colnames(sum_pathways_C01_L1)[1] <- "Pathway" # the first column is the pathway name,  so we need to change its name if it has not been done yet
+head(sum_pathways_C01_L1$Pathway)   # check first few pathway names
+
+# Step 1: Categorize
+pathways_grouped <- pathways_C01_L1 %>%
+  mutate(Group = recode(Pathway,
+                        "nitrogen fixation I (ferredoxin)" = "Nitrogen fixation",
+                        "nitrogen fixation II (flavodoxin)" = "Nitrogen fixation",
+                        "nitrate reduction I (denitrification)" = "Nitrate reduction (Denitrification)",
+                        "nitrate reduction III (dissimilatory)" = "Nitrate reduction (Dissimilatory)",
+                        "nitrate reduction IV (dissimilatory)" = "Nitrate reduction (Dissimilatory)",
+                        "nitrate reduction IX (dissimilatory)" = "Nitrate reduction (Dissimilatory)",
+                        "nitrate reduction X (dissimilatory)" = "Nitrate reduction (Dissimilatory)",
+                        "nitrate reduction VIII (dissimilatory)" = "Nitrate reduction (Dissimilatory)",
+                        "nitrate reduction VIIIb (dissimilatory)" = "Nitrate reduction (Dissimilatory)",
+                        "nitrate reduction V (assimilatory)" = "Nitrate reduction (Assimilatory)",
+                        "nitrate reduction VI (assimilatory)" = "Nitrate reduction (Assimilatory)",
+                        "ammonia oxidation I (aerobic)" = "Ammonia Oxidation")) %>%
+  group_by(Group) %>%
+  summarise(across(where(is.numeric), sum, na.rm=TRUE))
+
+# Step 2: Filter grouped pathways
+nitrogen_pathways <- pathways_grouped %>%
+  filter(Group %in% c("Nitrogen fixation", 
+                      "Nitrate reduction (Denitrification)", 
+                      "Nitrate reduction (Dissimilatory)", 
+                      "Nitrate reduction (Assimilatory)", 
+                      "Ammonia Oxidation"))
+
+#let's plot
+mat <- as.matrix(nitrogen_pathways[,-1])   # drop Pathway column
+rownames(mat) <- nitrogen_pathways$Group
+
+pheatmap(mat, cluster_rows=TRUE, cluster_cols=TRUE,
+         main="Nitrogen metabolism pathways (C01-L1 sample)")
+
+#### AUGUST ICE
+
+## set the directory if you haven't done yet
+
+files <- list.files(path="/mnt/data/home/salvatorecampanile/paprica results files", 
+                    pattern=".bacteria.sum_pathways.csv", full.names=TRUE) #read all the files and discriminate for their names
+
+# Re-read files with explicit column names
+pathway_list <- lapply(files, function(f) {
+  df <- read_csv(f, col_names = c("Pathway", "Abundance"), show_col_types = FALSE)
+  
+  # extract sample name: C01-L1, C02-L3, etc.
+  sample_name <- str_extract(basename(f), "C[0-9]+-L[1-5]")
+  
+  df$Sample <- sample_name
+  df
+})
+
+#combine into one big table
+august_ice_pathways <- bind_rows(pathway_list)
+
+#extract and replicate
+august_ice_pathways <- august_ice_pathways %>%
+  mutate(Layer = str_extract(Sample, "L[1-5]"))
+
+
+#categorize pathways into nitrogen groups
+august_ice_pathways_grouped <- august_ice_pathways %>%
+  mutate(Group = recode(Pathway,
+                        "nitrogen fixation I (ferredoxin)" = "Nitrogen fixation",
+                        "nitrogen fixation II (flavodoxin)" = "Nitrogen fixation",
+                        "nitrate reduction I (denitrification)" = "Nitrate reduction \n(Denitrification)",
+                        "nitrate reduction III (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction IV (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction IX (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction X (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction VIII (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction VIIIb (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction V (assimilatory)" = "Nitrate reduction \n(Assimilatory)",
+                        "nitrate reduction VI (assimilatory)" = "Nitrate reduction \n(Assimilatory)",
+                        "ammonia oxidation I (aerobic)" = "Ammonia Oxidation"))
+
+#nb the "\n" is used to separate sentences, titles or words in order to get them split across more lines
+
+nitrogen_pathways_august <- august_ice_pathways_grouped %>%
+  filter(Group %in% c("Nitrogen fixation", 
+                      "Nitrate reduction \n(Denitrification)", 
+                      "Nitrate reduction \n(Dissimilatory)", 
+                      "Nitrate reduction \n(Assimilatory)", 
+                      "Ammonia Oxidation"))
+
+
+# Create custom depth labels attempt 2
+layer_labels <- tibble(
+  Layer = c("L1", "L2", "L3", "L4", "L5"),
+  DepthLabel = c("Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "75–100 cm")
+)
+
+# Average + join labels attempt 2
+layer_avg <- nitrogen_pathways_august %>%
+  group_by(Group, Layer) %>%
+  summarise(MeanAbundance = mean(Abundance, na.rm = TRUE), .groups = "drop") %>%
+  left_join(layer_labels, by = "Layer") %>%
+  mutate(
+    DepthLabel = factor(
+      DepthLabel,
+      levels = c("Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "75–100 cm")
+    )
+  )
+
+# Pivot using friendly depth names attempt 2
+heatmap_data <- layer_avg %>%
+  select(-Layer) %>%        # ← REMOVE Layer
+  pivot_wider(
+    names_from = DepthLabel,
+    values_from = MeanAbundance,
+    values_fill = 0
+  )
+
+
+#convert to matrix
+mat <- as.matrix(heatmap_data[,-c(1)])
+rownames(mat) <- heatmap_data$Group
+
+print(heatmap_data)
+
+#plot
+pheatmap(
+  mat,
+  fontsize_row = 16,
+  fontsize_col = 14,
+  angle_col = 0,   # <-- makes column labels horizontal
+  cluster_rows=TRUE,
+  cluster_cols=FALSE,
+         main="Nitrogen metabolism pathways August Ice",
+  fontsize = 14
+  )
+
+
+
+
+### attempt for march ice
+
+## set the directory if you haven't done yet
+
+files <- list.files(path="/mnt/data/home/salvatorecampanile/paprica results files/march sum pathways", 
+                    pattern=".bacteria.sum_pathways.csv", full.names=TRUE) #read all the files and discriminate for their names
+
+# Re-read files with explicit column names
+pathway_list <- lapply(files, function(f) {
+  df <- read_csv(f, col_names = c("Pathway", "Abundance"), show_col_types = FALSE)
+  
+  # extract sample name: C01-L1, C02-L3, etc.
+  sample_name <- str_extract(basename(f), "C[0-9]+-L[1-5]")
+  
+  df$Sample <- sample_name
+  df
+})
+
+#combine into one big table
+august_ice_pathways <- bind_rows(pathway_list)
+
+#extract and replicate
+august_ice_pathways <- august_ice_pathways %>%
+  mutate(Layer = str_extract(Sample, "L[1-5]"))
+
+
+#categorize pathways into nitrogen groups
+august_ice_pathways_grouped <- august_ice_pathways %>%
+  mutate(Group = recode(Pathway,
+                        "nitrogen fixation I (ferredoxin)" = "Nitrogen fixation",
+                        "nitrogen fixation II (flavodoxin)" = "Nitrogen fixation",
+                        "nitrate reduction I (denitrification)" = "Nitrate reduction \n(Denitrification)",
+                        "nitrate reduction III (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction IV (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction IX (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction X (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction VIII (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction VIIIb (dissimilatory)" = "Nitrate reduction \n(Dissimilatory)",
+                        "nitrate reduction V (assimilatory)" = "Nitrate reduction \n(Assimilatory)",
+                        "nitrate reduction VI (assimilatory)" = "Nitrate reduction \n(Assimilatory)",
+                        "ammonia oxidation I (aerobic)" = "Ammonia Oxidation"))
+
+
+nitrogen_pathways_august <- august_ice_pathways_grouped %>%
+  filter(Group %in% c("Nitrogen fixation", 
+                      "Nitrate reduction \n(Denitrification)", 
+                      "Nitrate reduction \n(Dissimilatory)", 
+                      "Nitrate reduction \n(Assimilatory)", 
+                      "Ammonia Oxidation"))
+
+
+# Create custom depth labels attempt 2
+layer_labels <- tibble(
+  Layer = c("L1", "L2", "L3", "L4", "L5"),
+  DepthLabel = c("Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "Last 25 cm")
+)
+
+# Average + join labels attempt 2
+layer_avg <- nitrogen_pathways_august %>%
+  group_by(Group, Layer) %>%
+  summarise(MeanAbundance = mean(Abundance, na.rm = TRUE), .groups = "drop") %>%
+  left_join(layer_labels, by = "Layer") %>%
+  mutate(
+    DepthLabel = factor(
+      DepthLabel,
+      levels = c("Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "Last 25 cm")
+    )
+  )
+
+# Pivot using friendly depth names attempt 2
+heatmap_data <- layer_avg %>%
+  select(-Layer) %>%        # ← REMOVE Layer
+  pivot_wider(
+    names_from = DepthLabel,
+    values_from = MeanAbundance,
+    values_fill = 0
+  )
+
+
+#convert to matrix
+mat <- as.matrix(heatmap_data[,-c(1)])
+rownames(mat) <- heatmap_data$Group
+
+print(heatmap_data)
+
+#plot
+pheatmap(
+  mat,
+  fontsize_row = 16,
+  fontsize_col = 14,
+  angle_col = 0,   # <-- makes column labels horizontal
+  cluster_rows=FALSE,
+  cluster_cols=FALSE,
+  border_color = "white",
+  main="Nitrogen metabolism pathways March Ice",
+  fontsize = 14
+)
+
