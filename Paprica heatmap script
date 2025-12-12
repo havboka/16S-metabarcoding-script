@@ -260,11 +260,11 @@ pheatmap(
 )
 
 
-### ==========================================================
+### ========================================================== NIIIIIIIIIIIIIIIIIIITROGEN
 ###  Clustered heatmap grouped by month (March → May → August)
 ###  Columns = 6 enzymes per month (3 × 6 = 18)
 ###  Rows = depth layers
-### ==========================================================
+### ==========================================================NNNNNNNNNNNNNNNNNNNNNNITROGEN
 
 setwd("/mnt/data/home/salvatorecampanile/paprica results files")
 
@@ -441,5 +441,200 @@ pheatmap(
   fontsize = 12,
   labels_col = pretty_labels,   # <-- SHOW nice labels
   main = "Nitrogen Cycle Enzyme Predicted Abundance"
+)
+
+
+### ========================================================== SUUUUUUUUUUUUUUUUUUUUUULFUR
+###  Clustered heatmap grouped by month (March → May → August)
+###  Columns = 6 enzymes per month (3 × 6 = 18)
+###  Rows = depth layers
+### ========================================================== SSSSSSSSSSSSSSSSSSSSSSSULFUR
+
+setwd("/mnt/data/home/salvatorecampanile/paprica results files")
+
+library(tidyverse)
+library(readxl)
+library(pheatmap)
+
+# ---------------------------
+# 1. Load and filter data
+# ---------------------------
+
+df <- read_csv("sulfur_cycle.csv")
+
+enzymes <- c(
+  "Assimilatory sulfite reductase (NADPH).",
+  "Sulfite dehydrogenase (cytochrome).",
+  "Arylsulfatase.",
+  "D-cysteine desulfhydrase.",
+  "Cystathionine beta-lyase.",
+  "Cystathionine gamma-lyase."
+)
+
+df_filt <- df %>% filter(Enzyme_Name %in% enzymes)
+
+# ---------------------------
+# 2. Define sample groups
+# ---------------------------
+
+layer_samples <- list(
+  March = list(
+    L1 = c("C03-L1.", "C04-L1.", "C22-L1.", "C23-L1."),
+    L2 = c("C03-L2.", "C04-L2.", "C22-L2.", "C23-L2."),
+    L3 = c("C03-L3.", "C04-L3.", "C22-L3.", "C23-L3."),
+    L4 = c("C03-L4.", "C04-L4.", "C22-L4.", "C23-L4."),
+    L5 = c("C03-L5.", "C04-L5.", "C22-L5.", "C23-L5.")
+  ),
+  May = list(
+    L1 = c("C05-L1.", "C21-L1."),
+    L2 = c("C05-L2.", "C21-L2."),
+    L3 = c("C05-L3.", "C21-L3."),
+    L4 = c("C05-L4.", "C21-L4."),
+    L5 = c("C05-L5.", "C21-L5.")
+  ),
+  August = list(
+    L1 = c("C01-L1.", "C02-L1.", "C12-L1.", "C13-L1."),
+    L2 = c("C01-L2.", "C02-L2.", "C12-L2.", "C13-L2."),
+    L3 = c("C01-L3.", "C02-L3.", "C12-L3.", "C13-L3."),
+    L4 = c("C01-L4.", "C02-L4.", "C12-L4.", "C13-L4."),
+    L5 = c("C02-L5.", "C12-L5.", "C13-L5.")
+  )
+)
+
+# ---------------------------
+# 3. Function to calculate means per layer
+# ---------------------------
+
+compute_layer_means <- function(df, month) {
+  ls <- layer_samples[[month]]
+  
+  out <- df %>%
+    mutate(
+      L1 = rowMeans(select(., all_of(ls$L1)), na.rm = TRUE),
+      L2 = rowMeans(select(., all_of(ls$L2)), na.rm = TRUE),
+      L3 = rowMeans(select(., all_of(ls$L3)), na.rm = TRUE),
+      L4 = rowMeans(select(., all_of(ls$L4)), na.rm = TRUE),
+      L5 = rowMeans(select(., all_of(ls$L5)), na.rm = TRUE)
+    ) %>%
+    select(Enzyme_Name, L1, L2, L3, L4, L5)
+  
+  colnames(out)[2:6] <- paste(month, colnames(out)[2:6], sep = "_")
+  
+  return(out)
+}
+
+# ---------------------------
+# 4. Build merged dataframe
+# ---------------------------
+
+df_all <- reduce(
+  list(
+    compute_layer_means(df_filt, "March"),
+    compute_layer_means(df_filt, "May"),
+    compute_layer_means(df_filt, "August")
+  ),
+  full_join, 
+  by = "Enzyme_Name"
+)
+
+# ---------------------------
+# 5. Reshape: depth → rows, enzyme-month → columns
+# ---------------------------
+
+df_long <- df_all %>%
+  pivot_longer(
+    cols = -Enzyme_Name,
+    names_to = c("Month", "Layer"),
+    names_sep = "_",
+    values_to = "Value"
+  )
+
+df_long$Layer <- factor(df_long$Layer,
+                        levels = c("L1", "L2", "L3", "L4", "L5"),
+                        labels = c("Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "Last 25 cm"))
+
+# Create final column name: Enzyme_Month
+df_long <- df_long %>%
+  mutate(Column = paste(Enzyme_Name, Month, sep = "_"))
+
+# Make wide matrix
+heatmap_matrix <- df_long %>%
+  select(Layer, Column, Value) %>%
+  pivot_wider(names_from = Column, values_from = Value) %>%
+  column_to_rownames("Layer") %>%
+  as.matrix()
+
+# ---------------------------
+# 6. ORDER columns:
+# March enzymes → May enzymes → August enzymes
+# ---------------------------
+
+month_order <- c("March", "May", "August")
+
+ordered_cols <- heatmap_matrix %>%
+  colnames() %>%
+  sort(., method = "radix") %>%  # ensures alphabetical inside each month
+  .[order(factor(sub(".*_", "", .), levels = month_order))]
+
+heatmap_matrix <- heatmap_matrix[, ordered_cols]
+
+orig_colnames <- ordered_cols
+
+# Restore unique original names to ensure no duplicates
+colnames(heatmap_matrix) <- orig_colnames
+
+pretty_labels <- sub("_(March|May|August)$", "", orig_colnames)
+
+month_labels <- sub(".*_", "", orig_colnames)
+
+annotation_col <- data.frame(Month = month_labels)
+rownames(annotation_col) <- orig_colnames
+
+
+# ---------------------------
+# 7. Column annotation (month labels)
+# ---------------------------
+
+# Extract month from ORIGINAL column names
+month_labels <- sub(".*_", "", colnames(heatmap_matrix))
+
+annotation_col <- data.frame(Month = month_labels)
+rownames(annotation_col) <- colnames(heatmap_matrix)
+
+annotation_colors <- list(
+  Month = c(
+    March = "#fec44f",
+    May   = "#a1dab4",
+    August = "#9ecae1"
+  )
+)
+
+
+# ---------------------------
+# 8. Final heatmap
+# ---------------------------
+
+palette <- colorRampPalette(c(
+  "#fffff0",  # ivory
+  "#fffbe6",  # very pale cream
+  "#fff5cc",  # pastel cream-yellow
+  "#ffefb3",  # soft honey
+  "#ffe680",  # pastel sunflower
+  "#ffdb4d"   # warm golden pastel
+))(100)
+
+pheatmap(
+  heatmap_matrix,
+  color = palette,
+  border_color = "white",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  annotation_col = annotation_col,
+  annotation_colors = annotation_colors,
+  cellwidth = 40,
+  cellheight = 60,
+  fontsize = 12,
+  labels_col = pretty_labels,   # <-- SHOW nice labels
+  main = "Sulfur Cycle Enzyme Predicted Abundance"
 )
 
