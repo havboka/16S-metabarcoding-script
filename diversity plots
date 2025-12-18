@@ -1,0 +1,1631 @@
+
+#install other packages
+
+BiocManager::install("decontam")
+install.packages("viridis")
+
+
+
+
+
+# Loading libraries
+
+library("phyloseq")
+library("ggplot2")
+library("ShortRead")
+library("Biostrings")
+library("dada2")
+library("dplyr")
+library("DECIPHER")
+library("decontam")
+library("viridis")
+
+
+# load your R object
+
+v4.phyloseq <- readRDS("/home/salvatorecampanile/new taxonomy folder/v4.cleaned_no_mitochondria_no_chloroplasts_no_blanks.rds")
+
+
+# 1. Aggregate ASVs to genus level
+v4.genus <- tax_glom(v4.cleaned_no_blanks, taxrank = "Genus")
+
+# 2. Transform counts to relative abundances
+v4.genus.rel <- transform_sample_counts(v4.genus, function(x) x / sum(x))
+
+# 3. Extract genus-level abundance for sample C01-L1
+genus_mat <- as(otu_table(v4.genus.rel), "matrix")
+abundances <- genus_mat["C03-L3", ]
+
+# 4. Extract genus names from taxonomy table
+genus_names <- as.character(tax_table(v4.genus.rel)[, "Genus"])
+
+# 5. Create data frame for plotting
+df <- data.frame(
+  Genus = genus_names,
+  Abundance = abundances
+)
+df <- df[df$Abundance > 0, ]  # remove zero-abundance genera
+
+# 6. Plot
+ggplot(df, aes(x = reorder(Genus, -Abundance), y = Abundance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Genus-Level Abundance in Sample C03-L3",
+       x = "Genus",
+       y = "Relative Abundance") +
+  theme_minimal()
+
+
+
+
+### species attempt
+
+# 1. Aggregate ASVs to species level, keeping unclassified species
+v4.genus <- tax_glom(v4.cleaned_no_blanks, taxrank = "Genus", NArm = FALSE)
+
+
+# 2. Transform counts to relative abundances
+v4.genus.rel <- transform_sample_counts(v4.genus, function(x) x / sum(x))
+
+# 3. Extract matrix of species abundances
+genus_mat <- as(otu_table(v4.genus.rel), "matrix")
+abundances <- genus_mat["C03-L3", ]  # Replace with desired sample name
+
+# 4. Extract species names (and handle NAs)
+genus_names <- as.character(tax_table(v4.genus.rel)[, "Genus"])
+genus_names[is.na(genus_names)] <- "Unclassified"
+
+
+# 5. Create data frame for plotting
+df <- data.frame(
+  genus = genus_names,
+  Abundance = abundances
+)
+
+# 6. Sum abundance of unclassified species
+df_summary <- aggregate(Abundance ~ genus, data = df, sum)
+df_summary <- df_summary[df_summary$Abundance > 0, ]  # keep only present species
+
+# 7. Plot
+library(ggplot2)
+ggplot(df_summary, aes(x = reorder(genus, -Abundance), y = Abundance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "genus-Level Abundance in Sample C03-L3",
+       x = "genus",
+       y = "Relative Abundance") +
+  theme_minimal()
+
+
+
+#### Abundances plots
+samples_of_interest <- c("C04-L1", "C04-L2", "C04-L3", "C04-L4", "C04-L5")
+
+# Subset to just sample C01-L1
+phyloseq_subset <- subset_samples(v4.cleaned_no_blanks_no_contaminants, sample_names(v4.cleaned_no_blanks_no_contaminants) %in% samples_of_interest)
+
+# Agglomerate at Family level (include NAs)
+phyloseq_fam <- tax_glom(phyloseq_subset, taxrank = "Family", NArm = FALSE)
+
+# Transform to relative abundance
+phyloseq_fam_rel <- transform_sample_counts(phyloseq_fam, function(x) x / sum(x))
+
+# Melt to data frame
+df_fam_rel <- psmelt(phyloseq_fam_rel)
+df_fam_rel$Family <- as.character(df_fam_rel$Family)
+df_fam_rel$Family[is.na(df_fam_rel$Family)] <- "Unclassified"
+
+# Set a minimum abundance threshold (e.g., 1% = 0.01)
+abundance_threshold <- 0.01
+
+# Group low-abundance families
+df_fam_rel <- df_fam_rel %>%
+  mutate(Family = ifelse(Abundance < abundance_threshold, "Other", Family))
+
+# Re-aggregate to combine all "Other" entries
+df_fam_rel <- df_fam_rel %>%
+  group_by(Sample, Family) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+
+# Plot
+ggplot(df_fam_rel, aes(x = Sample, y = Abundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(title = "Relative Abundance - Family level (C04-L1 to C04-L5)", y = "Relative Abundance") +
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+### NEW PLOT MARCH ICE
+
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+
+#### Abundances plots
+samples_of_interest <- c("C04-L1", "C04-L2", "C04-L3", "C04-L4", "C04-L5")
+custom_labels <- c(
+  "C04-L1" = "Ice plug",
+  "C04-L2" = "0-25 cm",
+  "C04-L3" = "25-50 cm",
+  "C04-L4" = "50-75 cm",
+  "C04-L5" = "Last 25 cm"
+)
+
+# Subset to just samples of interest
+phyloseq_subset <- subset_samples(
+  v4.cleaned_no_blanks_no_contaminants,
+  sample_names(v4.cleaned_no_blanks_no_contaminants) %in% samples_of_interest
+)
+
+# Agglomerate at Family level (include NAs)
+phyloseq_fam <- tax_glom(phyloseq_subset, taxrank = "Family", NArm = FALSE)
+
+# Transform to relative abundance
+phyloseq_fam_rel <- transform_sample_counts(phyloseq_fam, function(x) x / sum(x))
+
+# Melt to data frame
+df_fam_rel <- psmelt(phyloseq_fam_rel)
+df_fam_rel$Family <- as.character(df_fam_rel$Family)
+df_fam_rel$Family[is.na(df_fam_rel$Family)] <- "Unclassified"
+
+# Set a minimum abundance threshold (e.g., 1% = 0.01)
+abundance_threshold <- 0.01
+
+# Group low-abundance families
+df_fam_rel <- df_fam_rel %>%
+  mutate(Family = ifelse(Abundance < abundance_threshold, "Other", Family))
+
+# Re-aggregate to combine all "Other" entries
+df_fam_rel <- df_fam_rel %>%
+  group_by(Sample, Family) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+# Convert Sample to factor with desired order and labels
+df_fam_rel$Sample <- factor(df_fam_rel$Sample,
+                            levels = samples_of_interest,
+                            labels = custom_labels[samples_of_interest])
+
+# Plot
+ggplot(df_fam_rel, aes(x = Sample, y = Abundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "Relative Abundance - Family level \nMarch Ice over SIPL depth",
+    y = "Relative Abundance",
+    x = NULL
+  ) +
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 11)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),       # Optional: make labels smaller
+    legend.key.size = unit(0.4, "cm")           # Optional: make legend boxes smaller
+  )
+
+
+### MAY ICE ABUNDANCE PLOT
+
+#### Abundances plots
+samples_of_interest <- c("C21-L1", "C21-L2", "C21-L3", "C21-L4", "C21-L5")
+custom_labels <- c(
+  "C21-L1" = "Ice plug",
+  "C21-L2" = "0-25 cm",
+  "C21-L3" = "25-50 cm",
+  "C21-L4" = "50-75 cm",
+  "C21-L5" = "Last 25 cm"
+)
+
+# Subset to just samples of interest
+phyloseq_subset <- subset_samples(
+  v4.cleaned_no_blanks_no_contaminants,
+  sample_names(v4.cleaned_no_blanks_no_contaminants) %in% samples_of_interest
+)
+
+# Agglomerate at Family level (include NAs)
+phyloseq_fam <- tax_glom(phyloseq_subset, taxrank = "Family", NArm = FALSE)
+
+# Transform to relative abundance
+phyloseq_fam_rel <- transform_sample_counts(phyloseq_fam, function(x) x / sum(x))
+
+# Melt to data frame
+df_fam_rel <- psmelt(phyloseq_fam_rel)
+df_fam_rel$Family <- as.character(df_fam_rel$Family)
+df_fam_rel$Family[is.na(df_fam_rel$Family)] <- "Unclassified"
+
+# Set a minimum abundance threshold (e.g., 1% = 0.01)
+abundance_threshold <- 0.01
+
+# Group low-abundance families
+df_fam_rel <- df_fam_rel %>%
+  mutate(Family = ifelse(Abundance < abundance_threshold, "Other", Family))
+
+# Re-aggregate to combine all "Other" entries
+df_fam_rel <- df_fam_rel %>%
+  group_by(Sample, Family) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+# Convert Sample to factor with desired order and labels
+df_fam_rel$Sample <- factor(df_fam_rel$Sample,
+                            levels = samples_of_interest,
+                            labels = custom_labels[samples_of_interest])
+
+# Plot
+ggplot(df_fam_rel, aes(x = Sample, y = Abundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "Relative Abundance - Family level \nMay Ice over SIPL depth",
+    y = "Relative Abundance",
+    x = NULL
+  ) +
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 11)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),       # Optional: make labels smaller
+    legend.key.size = unit(0.4, "cm")           # Optional: make legend boxes smaller
+  )
+
+### AUGUST ICE ABUNDANCE PLOT
+
+#### Abundances plots
+samples_of_interest <- c("C12-L1", "C12-L2", "C12-L3", "C12-L4", "C12-L5")
+custom_labels <- c(
+  "C12-L1" = "Ice plug",
+  "C12-L2" = "0-25 cm",
+  "C12-L3" = "25-50 cm",
+  "C12-L4" = "50-75 cm",
+  "C12-L5" = "Last 25 cm"
+)
+
+# Subset to just samples of interest
+phyloseq_subset <- subset_samples(
+  v4.cleaned_no_blanks_no_contaminants,
+  sample_names(v4.cleaned_no_blanks_no_contaminants) %in% samples_of_interest
+)
+
+# Agglomerate at Family level (include NAs)
+phyloseq_fam <- tax_glom(phyloseq_subset, taxrank = "Family", NArm = FALSE)
+
+# Transform to relative abundance
+phyloseq_fam_rel <- transform_sample_counts(phyloseq_fam, function(x) x / sum(x))
+
+# Melt to data frame
+df_fam_rel <- psmelt(phyloseq_fam_rel)
+df_fam_rel$Family <- as.character(df_fam_rel$Family)
+df_fam_rel$Family[is.na(df_fam_rel$Family)] <- "Unclassified"
+
+# Set a minimum abundance threshold (e.g., 1% = 0.01)
+abundance_threshold <- 0.01
+
+# Group low-abundance families
+df_fam_rel <- df_fam_rel %>%
+  mutate(Family = ifelse(Abundance < abundance_threshold, "Other", Family))
+
+# Re-aggregate to combine all "Other" entries
+df_fam_rel <- df_fam_rel %>%
+  group_by(Sample, Family) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+# Convert Sample to factor with desired order and labels
+df_fam_rel$Sample <- factor(df_fam_rel$Sample,
+                            levels = samples_of_interest,
+                            labels = custom_labels[samples_of_interest])
+
+# Plot
+ggplot(df_fam_rel, aes(x = Sample, y = Abundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "Relative Abundance - Family level \nAugust Ice over SIPL depth",
+    y = "Relative Abundance",
+    x = NULL
+  ) +
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 11)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),       # Optional: make labels smaller
+    legend.key.size = unit(0.4, "cm")           # Optional: make legend boxes smaller
+  )
+
+
+### MEAN RELATIVE ABUNDANCE FAMILY LEVEL AUGUST ICE
+
+
+# Load required libraries
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+
+# Define all samples of interest
+samples_of_interest <- c(
+  "C01-L1", "C02-L1", "C12-L1", "C13-L1",
+  "C01-L2", "C02-L2", "C12-L2", "C13-L2",
+  "C01-L3", "C02-L3", "C12-L3", "C13-L3",
+  "C01-L4", "C02-L4", "C12-L4", "C13-L4",
+  "C02-L5", "C12-L5", "C13-L5"
+)
+
+group_mapping <- data.frame(Sample = samples_of_interest) %>%
+  mutate(Group = case_when(
+    Sample %in% c("C01-L1", "C02-L1", "C12-L1", "C13-L1") ~ "Ice plug",
+    Sample %in% c("C01-L2", "C02-L2", "C12-L2", "C13-L2") ~ "0-25 cm",
+    Sample %in% c("C01-L3", "C02-L3", "C12-L3", "C13-L3") ~ "25-50 cm",
+    Sample %in% c("C01-L4", "C02-L4", "C12-L4", "C13-L4") ~ "50-75 cm",
+    Sample %in% c("C02-L5", "C12-L5", "C13-L5") ~ "Last 25 cm",
+    TRUE ~ NA_character_
+  ))
+
+
+# Subset the phyloseq object to just the samples of interest
+phyloseq_subset <- subset_samples(
+  v4.cleaned_no_blanks_no_contaminants,
+  sample_names(v4.cleaned_no_blanks_no_contaminants) %in% samples_of_interest
+)
+
+# Agglomerate at Family level (include NA)
+phyloseq_fam <- tax_glom(phyloseq_subset, taxrank = "Family", NArm = FALSE)
+
+# Transform to relative abundance
+phyloseq_fam_rel <- transform_sample_counts(phyloseq_fam, function(x) x / sum(x))
+
+# Melt to long format
+df_fam_rel <- psmelt(phyloseq_fam_rel)
+
+# Replace NA in Family with "Unclassified"
+df_fam_rel$Family <- as.character(df_fam_rel$Family)
+df_fam_rel$Family[is.na(df_fam_rel$Family)] <- "Unclassified"
+
+# Set abundance threshold
+abundance_threshold <- 0.01
+
+# Group low-abundance families (but keep "Unclassified")
+df_fam_rel <- df_fam_rel %>%
+  mutate(Family = ifelse(Abundance < abundance_threshold & Family != "Unclassified", "Other", Family))
+
+# Aggregate abundance per Sample and Family
+df_fam_rel <- df_fam_rel %>%
+  group_by(Sample, Family) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+# Add Group info to each sample
+df_fam_rel <- left_join(df_fam_rel, group_mapping, by = "Sample")
+
+# Calculate mean abundance per Family per Group
+df_grouped <- df_fam_rel %>%
+  group_by(Group, Family) %>%
+  summarise(MeanAbundance = mean(Abundance), .groups = "drop")
+
+# Set order of layers
+df_grouped$Group <- factor(df_grouped$Group,
+                           levels = c("Last 25 cm", "50-75 cm", "25-50 cm", "0-25 cm", "Ice plug"))
+
+df_grouped <- df_grouped %>%
+  group_by(Group) %>%
+  mutate(NormMeanAbundance = MeanAbundance / sum(MeanAbundance),
+         NormMeanAbundance = ifelse(NormMeanAbundance > 1, 1, NormMeanAbundance)) %>%
+  ungroup()
+
+
+df_grouped <- df_grouped %>%
+  group_by(Group) %>%
+  mutate(NormMeanAbundance = MeanAbundance / sum(MeanAbundance)) %>%
+  ungroup()
+
+
+
+# Plot mean relative abundance by layer
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "Normalized Mean Relative Abundance (Family level)\nAugust Ice by SIPL by Layer",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0))+
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 11)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.key.size = unit(0.4, "cm")
+  )
+
+## plot this one if you need the bars to be horizontal
+
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0)) +
+  coord_flip() +  # <-- This flips the bars
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 3)) +
+  theme(
+    axis.text.y = element_text(size = 15),  # Flipped: y-axis is now the group names
+    axis.text.x = element_text(size = 15),
+    legend.position = "none",
+    legend.text = element_text(size = 8),
+    legend.key.size = unit(0.4, "cm")
+  )
+
+#to highlist two families
+
+# Define highlighted families
+highlight_families <- c("Flavobacteriaceae", "Colwelliaceae")
+
+# Assign colors: highlighted families get distinct colors, others get grey
+df_grouped <- df_grouped %>%
+  mutate(FamilyColor = ifelse(Family %in% highlight_families, Family, "Other"))
+
+# Define custom colors
+family_colors <- c(
+  "Flavobacteriaceae" = "#708238",  # bright red
+  "Colwelliaceae" = "#C19A6B",     # blue
+  "Other" = "grey80"                   # light grey for all others
+)
+
+# Plot
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = FamilyColor)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_fill_manual(
+    values = family_colors,
+    breaks = c("Flavobacteriaceae", "Colwelliaceae"),
+    labels = c("Flavobacteriaceae", "Colwelliaceae"),
+    name = "Highlighted Families"
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0)) +
+  coord_flip() +  # horizontal bars
+  theme_classic() +
+  guides(fill = guide_legend(nrow = 1)) +
+  theme(
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(0.5, "cm")
+  )
+
+
+
+df_fam_rel %>%
+  group_by(Group) %>%
+  summarise(total_abundance = sum(Abundance))
+
+
+df_grouped %>%
+  group_by(Group) %>%
+  summarise(SumNorm = sum(NormMeanAbundance))
+
+### MEAN RELATIVE ABUNDANCE FAMILY LEVEL MARCH ICE
+
+
+# Load required libraries
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+
+# Define all samples of interest
+samples_of_interest <- c(
+  "C03-L1", "C04-L1", "C22-L1", "C23-L1",
+  "C03-L2", "C04-L2", "C22-L2", "C23-L2",
+  "C03-L3", "C04-L3", "C22-L3", "C23-L3",
+  "C03-L4", "C04-L4", "C22-L4", "C23-L4",
+  "C03-L5", "C04-L5", "C22-L5", "C23-L5"
+)
+
+group_mapping <- data.frame(Sample = samples_of_interest) %>%
+  mutate(Group = case_when(
+    Sample %in% c("C03-L1", "C04-L1", "C22-L1", "C23-L1") ~ "Ice plug",
+    Sample %in% c("C03-L2", "C04-L2", "C22-L2", "C23-L2") ~ "0-25 cm",
+    Sample %in% c("C03-L3", "C04-L3", "C22-L3", "C23-L3") ~ "25-50 cm",
+    Sample %in% c("C03-L4", "C04-L4", "C22-L4", "C23-L4") ~ "50-75 cm",
+    Sample %in% c("C03-L5", "C04-L5", "C22-L5", "C23-L5") ~ "Last 25 cm",
+    TRUE ~ NA_character_
+  ))
+
+
+# Subset the phyloseq object to just the samples of interest
+phyloseq_subset <- subset_samples(
+  v4.cleaned_no_blanks_no_contaminants,
+  sample_names(v4.cleaned_no_blanks_no_contaminants) %in% samples_of_interest
+)
+
+# Agglomerate at Family level (include NA)
+phyloseq_fam <- tax_glom(phyloseq_subset, taxrank = "Family", NArm = FALSE)
+
+# Transform to relative abundance
+phyloseq_fam_rel <- transform_sample_counts(phyloseq_fam, function(x) x / sum(x))
+
+# Melt to long format
+df_fam_rel <- psmelt(phyloseq_fam_rel)
+
+# Replace NA in Family with "Unclassified"
+df_fam_rel$Family <- as.character(df_fam_rel$Family)
+df_fam_rel$Family[is.na(df_fam_rel$Family)] <- "Unclassified"
+
+# Set abundance threshold
+abundance_threshold <- 0.01
+
+# Group low-abundance families (but keep "Unclassified")
+df_fam_rel <- df_fam_rel %>%
+  mutate(Family = ifelse(Abundance < abundance_threshold & Family != "Unclassified", "Other", Family))
+
+# Aggregate abundance per Sample and Family
+df_fam_rel <- df_fam_rel %>%
+  group_by(Sample, Family) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+# Add Group info to each sample
+df_fam_rel <- left_join(df_fam_rel, group_mapping, by = "Sample")
+
+# Calculate mean abundance per Family per Group
+df_grouped <- df_fam_rel %>%
+  group_by(Group, Family) %>%
+  summarise(MeanAbundance = mean(Abundance), .groups = "drop")
+
+# Set order of layers
+df_grouped$Group <- factor(df_grouped$Group,
+                           levels = c("Last 25 cm", "50-75 cm", "25-50 cm", "0-25 cm", "Ice plug"))
+
+df_grouped <- df_grouped %>%
+  group_by(Group) %>%
+  mutate(NormMeanAbundance = MeanAbundance / sum(MeanAbundance),
+         NormMeanAbundance = ifelse(NormMeanAbundance > 1, 1, NormMeanAbundance)) %>%
+  ungroup()
+
+
+df_grouped <- df_grouped %>%
+  group_by(Group) %>%
+  mutate(NormMeanAbundance = MeanAbundance / sum(MeanAbundance)) %>%
+  ungroup()
+
+
+
+# Plot mean relative abundance by layer
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "Normalized Mean Relative Abundance (Family level)\nMarch Ice by SIPL by Layer",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0))+
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 13)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.key.size = unit(0.4, "cm")
+  )
+
+
+## plot this one if you need the bars to be horizontal
+
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0)) +
+  coord_flip() +  # <-- This flips the bars
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 4)) +
+  theme(
+    axis.text.y = element_text(size = 15),  # Flipped: y-axis is now the group names
+    axis.text.x = element_text(size = 15),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.key.size = unit(0.4, "cm")
+  )
+
+#to highlist two families
+
+# Define highlighted families
+highlight_families <- c("Pseudomonadaceae", "Nitrosopumilaceae")
+
+# Assign colors: highlighted families get distinct colors, others get grey
+df_grouped <- df_grouped %>%
+  mutate(FamilyColor = ifelse(Family %in% highlight_families, Family, "Other"))
+
+# Define custom colors
+family_colors <- c(
+  "Pseudomonadaceae" = "#C8A2C8",  # bright red
+  "Nitrosopumilaceae" = "#66CDAA",     # blue
+  "Other" = "grey80"                   # light grey for all others
+)
+
+# Plot
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = FamilyColor)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_fill_manual(
+    values = family_colors,
+    breaks = c("Pseudomonadaceae", "Nitrosopumilaceae"),
+    labels = c("Pseudomonadaceae", "Nitrosopumilaceae"),
+    name = "Highlighted Families"
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0)) +
+  coord_flip() +  # horizontal bars
+  theme_classic() +
+  guides(fill = guide_legend(nrow = 1)) +
+  theme(
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.key.size = unit(0.5, "cm")
+  )
+
+
+### MEAN RELATIVE ABUNDANCE FAMILY LEVEL MAY ICE
+
+
+# Load required libraries
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+
+# Define all samples of interest
+samples_of_interest <- c(
+  "C05-L1", "C21-L1",
+  "C05-L2", "C21-L2",
+  "C05-L3", "C21-L3",
+  "C05-L4", "C21-L4",
+  "C05-L5", "C21-L5"
+)
+
+group_mapping <- data.frame(Sample = samples_of_interest) %>%
+  mutate(Group = case_when(
+    Sample %in% c("C05-L1", "C21-L1") ~ "Ice plug",
+    Sample %in% c("C05-L2", "C21-L2") ~ "0-25 cm",
+    Sample %in% c("C05-L3", "C21-L3") ~ "25-50 cm",
+    Sample %in% c("C05-L4", "C21-L4") ~ "50-75 cm",
+    Sample %in% c("C05-L5", "C21-L5") ~ "Last 25 cm",
+    TRUE ~ NA_character_
+  ))
+
+
+# Subset the phyloseq object to just the samples of interest
+phyloseq_subset <- subset_samples(
+  v4.cleaned_no_blanks_no_contaminants,
+  sample_names(v4.cleaned_no_blanks_no_contaminants) %in% samples_of_interest
+)
+
+# Agglomerate at Family level (include NA)
+phyloseq_fam <- tax_glom(phyloseq_subset, taxrank = "Family", NArm = FALSE)
+
+# Transform to relative abundance
+phyloseq_fam_rel <- transform_sample_counts(phyloseq_fam, function(x) x / sum(x))
+
+# Melt to long format
+df_fam_rel <- psmelt(phyloseq_fam_rel)
+
+# Replace NA in Family with "Unclassified"
+df_fam_rel$Family <- as.character(df_fam_rel$Family)
+df_fam_rel$Family[is.na(df_fam_rel$Family)] <- "Unclassified"
+
+# Set abundance threshold
+abundance_threshold <- 0.01
+
+# Group low-abundance families (but keep "Unclassified")
+df_fam_rel <- df_fam_rel %>%
+  mutate(Family = ifelse(Abundance < abundance_threshold & Family != "Unclassified", "Other", Family))
+
+# Aggregate abundance per Sample and Family
+df_fam_rel <- df_fam_rel %>%
+  group_by(Sample, Family) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+# Add Group info to each sample
+df_fam_rel <- left_join(df_fam_rel, group_mapping, by = "Sample")
+
+# Calculate mean abundance per Family per Group
+df_grouped <- df_fam_rel %>%
+  group_by(Group, Family) %>%
+  summarise(MeanAbundance = mean(Abundance), .groups = "drop")
+
+# Set order of layers
+df_grouped$Group <- factor(df_grouped$Group,
+                           levels = c("Last 25 cm", "50-75 cm", "25-50 cm", "0-25 cm", "Ice plug"))
+
+df_grouped <- df_grouped %>%
+  group_by(Group) %>%
+  mutate(NormMeanAbundance = MeanAbundance / sum(MeanAbundance),
+         NormMeanAbundance = ifelse(NormMeanAbundance > 1, 1, NormMeanAbundance)) %>%
+  ungroup()
+
+
+df_grouped <- df_grouped %>%
+  group_by(Group) %>%
+  mutate(NormMeanAbundance = MeanAbundance / sum(MeanAbundance)) %>%
+  ungroup()
+
+
+
+# Plot mean relative abundance by layer
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "Normalized Mean Relative Abundance (Family level)\nMay Ice by SIPL by Layer",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0))+
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 12)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.key.size = unit(0.4, "cm")
+  )
+
+## plot this one if you need the bars to be horizontal
+
+
+ggplot(df_grouped, aes(x = Group, y = NormMeanAbundance, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.3) +
+  labs(
+    title = "",
+    y = "Normalized Mean Relative Abundance",
+    x = NULL
+  ) +
+  scale_y_continuous(limits = c(0, 1.02), expand = c(0, 0)) +
+  coord_flip() +  # <-- This flips the bars
+  theme_classic() +
+  guides(fill = guide_legend(title = "Family", nrow = 4)) +
+  theme(
+    axis.text.y = element_text(size = 15),  # Flipped: y-axis is now the group names
+    axis.text.x = element_text(size = 15),
+    legend.position = "none",
+    legend.text = element_text(size = 8),
+    legend.key.size = unit(0.4, "cm")
+  )
+
+
+####SHANNON INDEX FAMILY LEVEL MARCH ICE
+
+# Define sample-to-group mapping
+group_mapping <- data.frame(
+  Sample = c("C03-L1", "C04-L1", "C22-L1", "C23-L1",
+             "C03-L2", "C04-L2", "C22-L2", "C23-L2",
+             "C03-L3", "C04-L3", "C22-L3", "C23-L3",
+             "C03-L4", "C04-L4", "C22-L4", "C23-L4",
+             "C03-L5", "C04-L5", "C22-L5", "C23-L5"),
+  Layer = c(rep("Ice plug", 4),
+            rep("0–25 cm", 4),
+            rep("25–50 cm", 4),
+            rep("50–75 cm", 4),
+            rep("Last 25 cm", 4))
+)
+
+
+# Subset only those 20 samples
+target_samples <- group_mapping$Sample
+phylo_subset <- subset_samples(v4.cleaned_no_blanks_no_contaminants, sample_names(v4.cleaned_no_blanks_no_contaminants) %in% target_samples)
+
+phylo_family <- tax_glom(phylo_subset, taxrank = "Family", NArm = FALSE)
+
+shannon_df <- estimate_richness(phylo_family, measures = "Shannon")
+
+shannon_df$Sample <- rownames(shannon_df)
+
+
+
+# 1. Add group info (Layer) to shannon_df
+shannon_df <- left_join(shannon_df, group_mapping, by = "Sample")
+
+# Set custom order for the 'Layer' column
+shannon_df$Layer <- factor(shannon_df$Layer, levels = c(
+  "Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "Last 25 cm"
+))
+
+ggplot(shannon_df, aes(x = Layer, y = Shannon)) +
+  geom_jitter(width = 0.15, size = 2, color = "lightblue") +  # individual replicates
+  stat_summary(fun = mean, geom = "point", size = 3, color = "darkblue") +  # group means
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, color = "darkblue") +
+  stat_summary(fun = mean, geom = "line", aes(group = 1), color = "black", linewidth = 1) +  # trend line
+  labs(title = "March Ice Shannon Diversity by Layer (Family level)", y = "Shannon Index", x = "SIPL depth") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggplot(shannon_df, aes(x = Layer, y = Shannon)) +
+  stat_summary(fun = mean, geom = "bar", fill = "steelblue", width = 0.6) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2) +
+  labs(title = "Shannon Diversity Index by Sediment Layer (Family level)",
+       x = "SIPL depth", y = "Shannon Index") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(shannon_df, aes(x = Layer, y = Shannon)) +
+  geom_jitter(width = 0.15, size = 3, color = "steelblue") +
+  stat_summary(fun = mean, geom = "point", size = 4, color = "darkred") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, color = "darkred") +
+  labs(title = "Shannon Diversity by Layer (Family level)", y = "Shannon Index", x = "Sediment Layer") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+tax_table(phyloseq_fam)[, "Family"] %>%
+  as.vector() %>%
+  unique() %>%
+  length()
+
+
+
+
+###########################
+## BOXPLOTS FOR IVERSITY ##
+###########################
+
+###########################
+##       SHANNON         ##
+###########################
+
+
+#install packages if needed
+install.packages("ggnewscale")
+
+#load libraries
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(ggnewscale) #importnat for the color division per month
+library(tibble)
+
+#check for the phyloseq object
+print(v4.cleaned_no_blanks_no_contaminants)
+
+#agglomerate at family level (change here whether the taxonomic depth is different)
+phylo_family <- tax_glom(
+  v4.cleaned_no_blanks_no_contaminants,
+  taxrank = "Family",
+  NArm = FALSE
+)
+
+#calculate shannon index
+
+shannon_df <- estimate_richness(
+  phylo_family,
+  measures = "Shannon"
+) %>%
+  rownames_to_column("Sample")
+
+##create sample metadata
+
+sample_categories <- tibble(
+  Sample = c(
+    # AUGUST
+    "C01-L1","C02-L1","C12-L1","C13-L1",
+    "C01-L2","C02-L2","C12-L2","C13-L2",
+    "C01-L3","C02-L3","C12-L3","C13-L3",
+    "C01-L4","C02-L4","C12-L4","C13-L4",
+    "C02-L5","C12-L5","C13-L5",
+    
+    # MAY
+    "C05-L1","C21-L1",
+    "C05-L2","C21-L2",
+    "C05-L3","C21-L3",
+    "C05-L4","C21-L4",
+    "C05-L5","C21-L5",
+    
+    # MARCH
+    "C03-L1","C04-L1","C22-L1","C23-L1",
+    "C03-L2","C04-L2","C22-L2","C23-L2",
+    "C03-L3","C04-L3","C22-L3",
+    "C03-L4","C04-L4","C22-L4","C23-L4",
+    "C03-L5","C04-L5","C22-L5","C23-L5"
+  ),
+  
+  Month = c(
+    rep("August", 19),
+    rep("May", 10),
+    rep("March", 19)
+  ),
+  
+  Layer = c(
+    # AUGUST
+    rep("Ice plug", 4),
+    rep("0-25 cm", 4),
+    rep("25-50 cm", 4),
+    rep("50-75 cm", 4),
+    rep("Last 25 cm", 3),
+    
+    # MAY
+    rep("Ice plug", 2),
+    rep("0-25 cm", 2),
+    rep("25-50 cm", 2),
+    rep("50-75 cm", 2),
+    rep("Last 25 cm", 2),
+    
+    # MARCH
+    rep("Ice plug", 4),
+    rep("0-25 cm", 4),
+    rep("25-50 cm", 3),
+    rep("50-75 cm", 4),
+    rep("Last 25 cm", 4)
+  )
+)
+
+#merge shannon indexes with metadata 
+shannon_all <- shannon_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month))
+
+#and then set factor order
+shannon_all$Month <- factor(
+  shannon_all$Month,
+  levels = c("March", "May", "August")
+)
+
+shannon_all$Layer <- factor(
+  shannon_all$Layer,
+  levels = c("Ice plug", "0-25 cm", "25-50 cm", "50-75 cm", "Last 25 cm")
+)
+
+#personalise with pastel color, each different per month 
+layer_levels <- levels(shannon_all$Layer)
+
+palette_march <- setNames(
+  c("#c6dbef","#9ecae1","#6baed6","#4292c6","#2171b5"),
+  layer_levels
+)
+
+palette_may <- setNames(
+  c("#dadaeb","#bcbddc","#9e9ac8","#807dba","#6a51a3"),
+  layer_levels
+)
+
+palette_august <- setNames(
+  c("#fee6ce","#fdd0a2","#fdae6b","#fd8d3c","#e6550d"),
+  layer_levels
+)
+
+# Add separate color grouping variables for each month
+shannon_all <- shannon_all %>%
+  mutate(
+    Layer_March = ifelse(Month == "March", Layer, NA),
+    Layer_May = ifelse(Month == "May", Layer, NA),
+    Layer_August = ifelse(Month == "August", Layer, NA)
+  )
+
+#plot this bitch (this will give just a palette of colors)
+ggplot(shannon_all, aes(x = Month, y = Shannon)) +
+  geom_boxplot(
+    width = 0.5,
+    outlier.shape = NA,
+    fill = "grey90",
+    color = "black"
+  ) +
+  geom_jitter(
+    aes(color = Layer),
+    width = 0.15,
+    size = 2.5,
+    alpha = 0.9
+  ) +
+  facet_wrap(~ Month, scales = "free_x") +
+  scale_color_manual(values = c(
+    palette_march,
+    palette_may,
+    palette_august
+  )) +
+  labs(
+    title = "Shannon diversity across ice months and depth layers",
+    x = "Ice month",
+    y = "Shannon index",
+    color = "Layer"
+  ) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold", size = 12),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+## attempt 2 to get more colors for each month
+
+ggplot() +
+  
+  # ---------------- MARCH ----------------
+geom_boxplot(
+  data = filter(shannon_all, Month == "March"),
+  aes(x = Month, y = Shannon),
+  width = 0.5,
+  outlier.shape = NA,
+  fill = "#82E2F6"
+) +
+  geom_jitter(
+    data = filter(shannon_all, Month == "March"),
+    aes(x = Month, y = Shannon, color = Layer),
+    width = 0.15,
+    size = 2.5
+  ) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  # ---------------- MAY ----------------
+geom_boxplot(
+  data = filter(shannon_all, Month == "May"),
+  aes(x = Month, y = Shannon),
+  width = 0.5,
+  outlier.shape = NA,
+  fill = "#C9D1FF"
+) +
+  geom_jitter(
+    data = filter(shannon_all, Month == "May"),
+    aes(x = Month, y = Shannon, color = Layer),
+    width = 0.15,
+    size = 2.5
+  ) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  # ---------------- AUGUST ----------------
+geom_boxplot(
+  data = filter(shannon_all, Month == "August"),
+  aes(x = Month, y = Shannon),
+  width = 0.5,
+  outlier.shape = NA,
+  fill = "#FBCC9F"
+) +
+  geom_jitter(
+    data = filter(shannon_all, Month == "August"),
+    aes(x = Month, y = Shannon, color = Layer),
+    width = 0.15,
+    size = 2.5
+  ) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(
+    title = "Shannon diversity across ice months and depth layers",
+    x = "Ice formation month",
+    y = "Shannon index",
+    color = "Layer"
+  ) +
+  theme_classic()
+
+
+############################
+##   INVERSE SIMPSON      ##
+############################
+
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(ggnewscale)
+library(tibble)
+
+# Agglomerate at family level
+phylo_family <- tax_glom(
+  v4.cleaned_no_blanks_no_contaminants,
+  taxrank = "Family",
+  NArm = FALSE
+)
+
+# Calculate inverse Simpson index
+invsimpson_df <- estimate_richness(
+  phylo_family,
+  measures = "InvSimpson"
+) %>%
+  rownames_to_column("Sample")
+
+# Merge with metadata
+invsimpson_all <- invsimpson_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month))
+
+# Factor order
+invsimpson_all$Month <- factor(
+  invsimpson_all$Month,
+  levels = c("March", "May", "August")
+)
+
+invsimpson_all$Layer <- factor(
+  invsimpson_all$Layer,
+  levels = c("Ice plug", "0-25 cm", "25-50 cm", "50-75 cm", "Last 25 cm")
+)
+
+# ---- Plot ----
+
+ggplot() +
+  
+  # ---------------- MARCH ----------------
+geom_boxplot(
+  data = filter(invsimpson_all, Month == "March"),
+  aes(x = Month, y = InvSimpson),
+  width = 0.5,
+  outlier.shape = NA,
+  fill = "#82E2F6"
+) +
+  geom_jitter(
+    data = filter(invsimpson_all, Month == "March"),
+    aes(x = Month, y = InvSimpson, color = Layer),
+    width = 0.15,
+    size = 2.5
+  ) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  # ---------------- MAY ----------------
+geom_boxplot(
+  data = filter(invsimpson_all, Month == "May"),
+  aes(x = Month, y = InvSimpson),
+  width = 0.5,
+  outlier.shape = NA,
+  fill = "#C9D1FF"
+) +
+  geom_jitter(
+    data = filter(invsimpson_all, Month == "May"),
+    aes(x = Month, y = InvSimpson, color = Layer),
+    width = 0.15,
+    size = 2.5
+  ) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  # ---------------- AUGUST ----------------
+geom_boxplot(
+  data = filter(invsimpson_all, Month == "August"),
+  aes(x = Month, y = InvSimpson),
+  width = 0.5,
+  outlier.shape = NA,
+  fill = "#FBCC9F"
+) +
+  geom_jitter(
+    data = filter(invsimpson_all, Month == "August"),
+    aes(x = Month, y = InvSimpson, color = Layer),
+    width = 0.15,
+    size = 2.5
+  ) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(
+    title = "Inverse Simpson diversity across ice months and depth layers",
+    x = "Ice formation month",
+    y = "Inverse Simpson index",
+    color = "Layer"
+  ) +
+  theme_classic()
+
+
+############################
+##   SPECIES RICHNESS     ##
+############################
+
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(ggnewscale)
+library(tibble)
+
+
+
+#check in advance, some phyloseq objects are substituting - with .
+head(species_df$Sample)
+head(sample_categories$Sample)
+
+#change if this is the case and the names do not match
+species_df$Sample <- gsub("\\.", "-", species_df$Sample)
+
+
+# Calculate species richness (Observed ASVs)
+species_df <- estimate_richness(
+  v4.cleaned_no_blanks_no_contaminants,
+  measures = "Observed"
+) %>%
+  rownames_to_column("Sample")
+
+#change if this is the case and the names do not match
+species_df$Sample <- gsub("\\.", "-", species_df$Sample)
+
+# Merge metadata
+species_all <- species_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month))
+
+# Factor order
+species_all$Month <- factor(
+  species_all$Month, 
+  levels = c("March", "May", "August")
+  )
+
+species_all$Layer <- factor(
+  species_all$Layer,
+  levels = c(
+    "Ice plug",
+    "0-25 cm", 
+    "25-50 cm", 
+    "50-75 cm", 
+    "Last 25 cm")
+)
+
+# Define again the palettes using species_all this time
+
+layer_levels <- levels(species_all$Layer)
+
+palette_march <- setNames(
+  c("#c6dbef", "#9ecae1", "#6baed6", "#4292c6", "#2171b5"),
+  layer_levels
+)
+
+palette_may <- setNames(
+  c("#dadaeb", "#bcbddc", "#9e9ac8", "#807dba", "#6a51a3"),
+  layer_levels
+)
+
+palette_august <- setNames(
+  c("#fee6ce", "#fdd0a2", "#fdae6b", "#fd8d3c", "#e6550d"),
+  layer_levels
+)
+
+# ---- Plot ----
+ggplot() +
+  geom_boxplot(
+    data = filter(species_all, Month == "March"),
+    aes(x = Month, y = Observed),
+    width = 0.5, outlier.shape = NA, fill = "#82E2F6"
+  ) +
+  geom_jitter(
+    data = filter(species_all, Month == "March"),
+    aes(x = Month, y = Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(
+    data = filter(species_all, Month == "May"),
+    aes(x = Month, y = Observed),
+    width = 0.5, outlier.shape = NA, fill = "#C9D1FF"
+  ) +
+  geom_jitter(
+    data = filter(species_all, Month == "May"),
+    aes(x = Month, y = Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(
+    data = filter(species_all, Month == "August"),
+    aes(x = Month, y = Observed),
+    width = 0.5, outlier.shape = NA, fill = "#FBCC9F"
+  ) +
+  geom_jitter(
+    data = filter(species_all, Month == "August"),
+    aes(x = Month, y = Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(
+    title = "Species richness across ice months and depth layers",
+    x = "Ice formation month",
+    y = "Species richness",
+    color = "Layer"
+  ) +
+  theme_classic()
+
+
+############################
+##   GENUS RICHNESS       ##
+############################
+
+###### SHARED SCRIPT FOR EACH TAXONOMIC TAXA #######
+
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(ggnewscale)
+library(tibble)
+
+# Factor levels
+layer_levels <- c("Ice plug", "0-25 cm", "25-50 cm", "50-75 cm", "Last 25 cm")
+month_levels <- c("March", "May", "August")
+
+# Color palettes
+palette_march <- c(
+  "Ice plug" = "#c6dbef",
+  "0-25 cm" = "#9ecae1",
+  "25-50 cm" = "#6baed6",
+  "50-75 cm" = "#4292c6",
+  "Last 25 cm" = "#2171b5"
+)
+
+palette_may <- c(
+  "Ice plug" = "#dadaeb",
+  "0-25 cm" = "#bcbddc",
+  "25-50 cm" = "#9e9ac8",
+  "50-75 cm" = "#807dba",
+  "Last 25 cm" = "#6a51a3"
+)
+
+palette_august <- c(
+  "Ice plug" = "#fee6ce",
+  "0-25 cm" = "#fdd0a2",
+  "25-50 cm" = "#fdae6b",
+  "50-75 cm" = "#fd8d3c",
+  "Last 25 cm" = "#e6550d"
+)
+
+### NOW GENERA 
+
+############################
+##   GENUS RICHNESS       ##
+############################
+
+phylo_genus <- tax_glom(
+  v4.cleaned_no_blanks_no_contaminants,
+  taxrank = "Genus",
+  NArm = FALSE
+)
+
+genus_df <- estimate_richness(
+  phylo_genus,
+  measures = "Observed"
+) %>%
+  rownames_to_column("Sample") %>%
+  mutate(
+    Sample = gsub("\\.", "-", Sample)   # 🔑 THIS IS MANDATORY
+  )
+
+genus_all <- genus_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(
+    Month = factor(Month, levels = month_levels),
+    Layer = factor(Layer, levels = layer_levels)
+  )
+
+# SAFETY CHECK (will stop if join failed)
+stopifnot(any(!is.na(genus_all$Layer)))
+
+
+# NOW PLOT (if you copy and opaste this for other taxa, please keep in mind to 
+# change the xxxx_all, according to te selection you had)
+
+ggplot() +
+  geom_boxplot(
+    data = filter(genus_all, Month == "March"),
+    aes(Month, Observed),
+    fill = "#82E2F6", width = 0.5, outlier.shape = NA
+  ) +
+  geom_jitter(
+    data = filter(genus_all, Month == "March"),
+    aes(Month, Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(
+    data = filter(genus_all, Month == "May"),
+    aes(Month, Observed),
+    fill = "#C9D1FF", width = 0.5, outlier.shape = NA
+  ) +
+  geom_jitter(
+    data = filter(genus_all, Month == "May"),
+    aes(Month, Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(
+    data = filter(genus_all, Month == "August"),
+    aes(Month, Observed),
+    fill = "#FBCC9F", width = 0.5, outlier.shape = NA
+  ) +
+  geom_jitter(
+    data = filter(genus_all, Month == "August"),
+    aes(Month, Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(
+    title = "Genera richness across ice months and depth layers",
+    x = "Ice formation month",
+    y = "Genera richness",
+    color = "Layer"
+  ) +
+  theme_classic()
+
+
+############################
+##   FAMILY RICHNESS      ##
+############################
+
+phylo_family <- tax_glom(v4.cleaned_no_blanks_no_contaminants, taxrank = "Family", NArm = FALSE)
+
+family_df <- estimate_richness(phylo_family, measures = "Observed") %>%
+  rownames_to_column("Sample") %>%
+  mutate(Sample = gsub("\\.", "-", Sample))  # 🔑 fix names
+
+family_all <- family_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(
+    Month = factor(Month, levels = month_levels),
+    Layer = factor(Layer, levels = layer_levels)
+  )
+
+# Plot (same structure as genus)
+ggplot() +
+  geom_boxplot(data = filter(family_all, Month == "March"), aes(Month, Observed),
+               fill = "#82E2F6", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(family_all, Month == "March"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(family_all, Month == "May"), aes(Month, Observed),
+               fill = "#C9D1FF", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(family_all, Month == "May"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(family_all, Month == "August"), aes(Month, Observed),
+               fill = "#FBCC9F", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(family_all, Month == "August"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(title = "Family richness across ice months and depth layers",
+       x = "Ice formation month", y = "Family richness", color = "Layer") +
+  theme_classic()
+
+
+############################
+##   ORDER  RICHNESS      ##
+############################
+
+
+
+
+phylo_order <- tax_glom(v4.cleaned_no_blanks_no_contaminants, taxrank = "Order", NArm = FALSE)
+
+order_df <- estimate_richness(phylo_order, measures = "Observed") %>%
+  rownames_to_column("Sample") %>%
+  mutate(Sample = gsub("\\.", "-", Sample))
+
+order_all <- order_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(Month = factor(Month, levels = month_levels),
+         Layer = factor(Layer, levels = layer_levels))
+
+ggplot() +
+  geom_boxplot(data = filter(order_all, Month == "March"), aes(Month, Observed),
+               fill = "#82E2F6", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(order_all, Month == "March"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(order_all, Month == "May"), aes(Month, Observed),
+               fill = "#C9D1FF", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(order_all, Month == "May"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(order_all, Month == "August"), aes(Month, Observed),
+               fill = "#FBCC9F", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(order_all, Month == "August"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(title = "Order richness across ice months and depth layers",
+       x = "Ice formation month", y = "Order richness", color = "Layer") +
+  theme_classic()
+
+############################
+##   CLASS  RICHNESS      ##
+############################
+
+
+phylo_class <- tax_glom(v4.cleaned_no_blanks_no_contaminants, taxrank = "Class", NArm = FALSE)
+
+class_df <- estimate_richness(phylo_class, measures = "Observed") %>%
+  rownames_to_column("Sample") %>%
+  mutate(Sample = gsub("\\.", "-", Sample))
+
+class_all <- class_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(Month = factor(Month, levels = month_levels),
+         Layer = factor(Layer, levels = layer_levels))
+
+ggplot() +
+  geom_boxplot(data = filter(class_all, Month == "March"), aes(Month, Observed),
+               fill = "#82E2F6", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(class_all, Month == "March"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(class_all, Month == "May"), aes(Month, Observed),
+               fill = "#C9D1FF", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(class_all, Month == "May"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(class_all, Month == "August"), aes(Month, Observed),
+               fill = "#FBCC9F", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(class_all, Month == "August"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(title = "Class richness across ice months and depth layers",
+       x = "Ice formation month", y = "Class richness", color = "Layer") +
+  theme_classic()
+
+############################
+##   PHYLUM  RICHNESS    ##
+############################
+
+phylo_phylum <- tax_glom(v4.cleaned_no_blanks_no_contaminants, taxrank = "Phylum", NArm = FALSE)
+
+phylum_df <- estimate_richness(phylo_phylum, measures = "Observed") %>%
+  rownames_to_column("Sample") %>%
+  mutate(Sample = gsub("\\.", "-", Sample))
+
+phylum_all <- phylum_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(Month = factor(Month, levels = month_levels),
+         Layer = factor(Layer, levels = layer_levels))
+
+ggplot() +
+  geom_boxplot(data = filter(phylum_all, Month == "March"), aes(Month, Observed),
+               fill = "#82E2F6", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(phylum_all, Month == "March"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(phylum_all, Month == "May"), aes(Month, Observed),
+               fill = "#C9D1FF", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(phylum_all, Month == "May"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  geom_boxplot(data = filter(phylum_all, Month == "August"), aes(Month, Observed),
+               fill = "#FBCC9F", width = 0.5, outlier.shape = NA) +
+  geom_jitter(data = filter(phylum_all, Month == "August"), aes(Month, Observed, color = Layer),
+              width = 0.15, size = 2.5) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(title = "Phylum richness across ice months and depth layers",
+       x = "Ice formation month", y = "Phylum richness", color = "Layer") +
+  theme_classic()
+
+
