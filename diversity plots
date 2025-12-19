@@ -1629,3 +1629,780 @@ ggplot() +
   theme_classic()
 
 
+
+
+
+
+#####################################################################
+#####                                                           #####  
+#####                                                           #####
+#####                       ASV index                           #####
+#####                                                           #####
+#####                                                           #####
+#####################################################################
+
+
+# ---- Shannon diversity at ASV level ----
+
+library(phyloseq)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(ggnewscale)
+
+# Factor levels
+layer_levels <- c("Ice plug", "0-25 cm", "25-50 cm", "50-75 cm", "Last 25 cm")
+month_levels <- c("March", "May", "August")
+
+# Color palettes
+palette_march <- c(
+  "Ice plug" = "#c6dbef",
+  "0-25 cm" = "#9ecae1",
+  "25-50 cm" = "#6baed6",
+  "50-75 cm" = "#4292c6",
+  "Last 25 cm" = "#2171b5"
+)
+palette_may <- c(
+  "Ice plug" = "#dadaeb",
+  "0-25 cm" = "#bcbddc",
+  "25-50 cm" = "#9e9ac8",
+  "50-75 cm" = "#807dba",
+  "Last 25 cm" = "#6a51a3"
+)
+palette_august <- c(
+  "Ice plug" = "#fee6ce",
+  "0-25 cm" = "#fdd0a2",
+  "25-50 cm" = "#fdae6b",
+  "50-75 cm" = "#fd8d3c",
+  "Last 25 cm" = "#e6550d"
+)
+
+# Ensure sample names match your metadata
+sample_names(v4.cleaned_no_blanks_no_contaminants) <- gsub("\\.", "-", sample_names(v4.cleaned_no_blanks_no_contaminants))
+
+# Calculate Shannon index for each ASV per sample
+shannon_df <- estimate_richness(
+  v4.cleaned_no_blanks_no_contaminants,
+  measures = "Shannon"
+) %>%
+  rownames_to_column("Sample")
+
+# Merge with your sample metadata
+shannon_all <- shannon_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(
+    Month = factor(Month, levels = month_levels),
+    Layer = factor(Layer, levels = layer_levels)
+  )
+
+# Add separate Layer variables per month for ggnewscale
+shannon_all <- shannon_all %>%
+  mutate(
+    Layer_March = ifelse(Month == "March", Layer, NA),
+    Layer_May = ifelse(Month == "May", Layer, NA),
+    Layer_August = ifelse(Month == "August", Layer, NA)
+  )
+
+# ---- Plot ----
+ggplot() +
+  
+  # March
+  geom_boxplot(
+    data = filter(shannon_all, Month == "March"),
+    aes(x = Month, y = Shannon),
+    width = 0.5, outlier.shape = NA, fill = "#82E2F6"
+  ) +
+  geom_jitter(
+    data = filter(shannon_all, Month == "March"),
+    aes(x = Month, y = Shannon, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  # May
+  geom_boxplot(
+    data = filter(shannon_all, Month == "May"),
+    aes(x = Month, y = Shannon),
+    width = 0.5, outlier.shape = NA, fill = "#C9D1FF"
+  ) +
+  geom_jitter(
+    data = filter(shannon_all, Month == "May"),
+    aes(x = Month, y = Shannon, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  # August
+  geom_boxplot(
+    data = filter(shannon_all, Month == "August"),
+    aes(x = Month, y = Shannon),
+    width = 0.5, outlier.shape = NA, fill = "#FBCC9F"
+  ) +
+  geom_jitter(
+    data = filter(shannon_all, Month == "August"),
+    aes(x = Month, y = Shannon, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(
+    title = "Shannon diversity (ASV-level) across ice months and depth layers",
+    x = "Ice formation month",
+    y = "Shannon index",
+    color = "Layer"
+  ) +
+  theme_classic()
+
+
+
+# ---- Inverse Simpson diversity at ASV level ----
+
+library(phyloseq)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(ggnewscale)
+
+# Factor levels
+layer_levels <- c("Ice plug", "0-25 cm", "25-50 cm", "50-75 cm", "Last 25 cm")
+month_levels <- c("March", "May", "August")
+
+# Color palettes
+palette_march <- c(
+  "Ice plug" = "#c6dbef",
+  "0-25 cm" = "#9ecae1",
+  "25-50 cm" = "#6baed6",
+  "50-75 cm" = "#4292c6",
+  "Last 25 cm" = "#2171b5"
+)
+palette_may <- c(
+  "Ice plug" = "#dadaeb",
+  "0-25 cm" = "#bcbddc",
+  "25-50 cm" = "#9e9ac8",
+  "50-75 cm" = "#807dba",
+  "Last 25 cm" = "#6a51a3"
+)
+palette_august <- c(
+  "Ice plug" = "#fee6ce",
+  "0-25 cm" = "#fdd0a2",
+  "25-50 cm" = "#fdae6b",
+  "50-75 cm" = "#fd8d3c",
+  "Last 25 cm" = "#e6550d"
+)
+
+# Ensure sample names match metadata
+sample_names(v4.cleaned_no_blanks_no_contaminants) <-
+  gsub("\\.", "-", sample_names(v4.cleaned_no_blanks_no_contaminants))
+
+# Calculate Inverse Simpson index for each sample (ASV level)
+invsimp_df <- estimate_richness(
+  v4.cleaned_no_blanks_no_contaminants,
+  measures = "InvSimpson"
+) %>%
+  rownames_to_column("Sample") %>%
+  mutate(Sample = gsub("\\.", "-", Sample))   # critical safeguard
+
+# Merge with sample metadata
+invsimp_all <- invsimp_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(
+    Month = factor(Month, levels = month_levels),
+    Layer = factor(Layer, levels = layer_levels)
+  )
+
+# ---- Plot ----
+ggplot() +
+  
+  # March
+  geom_boxplot(
+    data = filter(invsimp_all, Month == "March"),
+    aes(x = Month, y = InvSimpson),
+    width = 0.5, outlier.shape = NA, fill = "#82E2F6"
+  ) +
+  geom_jitter(
+    data = filter(invsimp_all, Month == "March"),
+    aes(x = Month, y = InvSimpson, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  # May
+  geom_boxplot(
+    data = filter(invsimp_all, Month == "May"),
+    aes(x = Month, y = InvSimpson),
+    width = 0.5, outlier.shape = NA, fill = "#C9D1FF"
+  ) +
+  geom_jitter(
+    data = filter(invsimp_all, Month == "May"),
+    aes(x = Month, y = InvSimpson, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  # August
+  geom_boxplot(
+    data = filter(invsimp_all, Month == "August"),
+    aes(x = Month, y = InvSimpson),
+    width = 0.5, outlier.shape = NA, fill = "#FBCC9F"
+  ) +
+  geom_jitter(
+    data = filter(invsimp_all, Month == "August"),
+    aes(x = Month, y = InvSimpson, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(
+    title = "Inverse Simpson diversity (ASV-level) across ice months and depth layers",
+    x = "Ice formation month",
+    y = "Inverse Simpson index",
+    color = "Layer"
+  ) +
+  theme_classic()
+
+
+
+
+
+
+###########################
+## ---- ASV richness ----##
+###########################
+
+
+library(phyloseq)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(ggnewscale)
+
+# Factor levels
+layer_levels <- c("Ice plug", "0-25 cm", "25-50 cm", "50-75 cm", "Last 25 cm")
+month_levels <- c("March", "May", "August")
+
+# Color palettes
+palette_march <- c(
+  "Ice plug" = "#c6dbef",
+  "0-25 cm" = "#9ecae1",
+  "25-50 cm" = "#6baed6",
+  "50-75 cm" = "#4292c6",
+  "Last 25 cm" = "#2171b5"
+)
+palette_may <- c(
+  "Ice plug" = "#dadaeb",
+  "0-25 cm" = "#bcbddc",
+  "25-50 cm" = "#9e9ac8",
+  "50-75 cm" = "#807dba",
+  "Last 25 cm" = "#6a51a3"
+)
+palette_august <- c(
+  "Ice plug" = "#fee6ce",
+  "0-25 cm" = "#fdd0a2",
+  "25-50 cm" = "#fdae6b",
+  "50-75 cm" = "#fd8d3c",
+  "Last 25 cm" = "#e6550d"
+)
+
+# Make sure sample names match metadata
+sample_names(v4.cleaned_no_blanks_no_contaminants) <- gsub("\\.", "-", sample_names(v4.cleaned_no_blanks_no_contaminants))
+
+# Calculate ASV richness (Observed)
+asv_df <- estimate_richness(
+  v4.cleaned_no_blanks_no_contaminants,
+  measures = "Observed"
+) %>%
+  rownames_to_column("Sample") %>%
+  mutate(Sample = gsub("\\.", "-", Sample))   # ← THIS WAS MISSING
+
+
+# Merge with metadata
+asv_all <- asv_df %>%
+  left_join(sample_categories, by = "Sample") %>%
+  filter(!is.na(Month)) %>%
+  mutate(
+    Month = factor(Month, levels = month_levels),
+    Layer = factor(Layer, levels = layer_levels)
+  )
+
+
+# ---- Plot ----
+ggplot() +
+  
+  # March
+  geom_boxplot(
+    data = filter(asv_all, Month == "March"),
+    aes(x = Month, y = Observed),
+    fill = "#82E2F6", width = 0.5, outlier.shape = NA
+  ) +
+  geom_jitter(
+    data = filter(asv_all, Month == "March"),
+    aes(x = Month, y = Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_march) +
+  ggnewscale::new_scale_color() +
+  
+  # May
+  geom_boxplot(
+    data = filter(asv_all, Month == "May"),
+    aes(x = Month, y = Observed),
+    fill = "#C9D1FF", width = 0.5, outlier.shape = NA
+  ) +
+  geom_jitter(
+    data = filter(asv_all, Month == "May"),
+    aes(x = Month, y = Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_may) +
+  ggnewscale::new_scale_color() +
+  
+  # August
+  geom_boxplot(
+    data = filter(asv_all, Month == "August"),
+    aes(x = Month, y = Observed),
+    fill = "#FBCC9F", width = 0.5, outlier.shape = NA
+  ) +
+  geom_jitter(
+    data = filter(asv_all, Month == "August"),
+    aes(x = Month, y = Observed, color = Layer),
+    width = 0.15, size = 2.5
+  ) +
+  scale_color_manual(values = palette_august) +
+  
+  labs(
+    title = "ASV richness across ice months and depth layers",
+    x = "Ice formation month",
+    y = "ASV richness",
+    color = "Layer"
+  ) +
+  theme_classic()
+
+
+
+
+
+
+################################################
+#                                              #
+#             BETA DIVERSITY                   #
+#                                              #
+################################################
+
+#### BRAY-CURTIS BETA DIVERSITY ASV-LEVEL, colored by ice type
+
+#LOAD YOUR LIBRARIES
+
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+
+
+
+# and change the name of the samples so the layers will match 
+sample_names(v4.cleaned_no_blanks_no_contaminants) <-
+  gsub("\\.", "-", sample_names(v4.cleaned_no_blanks_no_contaminants))
+
+##create sample metadata
+
+sample_categories <- tibble(
+  Sample = c(
+    # AUGUST
+    "C01-L1","C02-L1","C12-L1","C13-L1",
+    "C01-L2","C02-L2","C12-L2","C13-L2",
+    "C01-L3","C02-L3","C12-L3","C13-L3",
+    "C01-L4","C02-L4","C12-L4","C13-L4",
+    "C02-L5","C12-L5","C13-L5",
+    
+    # MAY
+    "C05-L1","C21-L1",
+    "C05-L2","C21-L2",
+    "C05-L3","C21-L3",
+    "C05-L4","C21-L4",
+    "C05-L5","C21-L5",
+    
+    # MARCH
+    "C03-L1","C04-L1","C22-L1","C23-L1",
+    "C03-L2","C04-L2","C22-L2","C23-L2",
+    "C03-L3","C04-L3","C22-L3",
+    "C03-L4","C04-L4","C22-L4","C23-L4",
+    "C03-L5","C04-L5","C22-L5","C23-L5"
+  ),
+  
+  Month = c(
+    rep("August", 19),
+    rep("May", 10),
+    rep("March", 19)
+  ),
+  
+  Layer = c(
+    # AUGUST
+    rep("Ice plug", 4),
+    rep("0-25 cm", 4),
+    rep("25-50 cm", 4),
+    rep("50-75 cm", 4),
+    rep("Last 25 cm", 3),
+    
+    # MAY
+    rep("Ice plug", 2),
+    rep("0-25 cm", 2),
+    rep("25-50 cm", 2),
+    rep("50-75 cm", 2),
+    rep("Last 25 cm", 2),
+    
+    # MARCH
+    rep("Ice plug", 4),
+    rep("0-25 cm", 4),
+    rep("25-50 cm", 3),
+    rep("50-75 cm", 4),
+    rep("Last 25 cm", 4)
+  )
+)
+
+
+#build sample emtadata
+meta_df <- sample_categories %>%
+  mutate(
+    Sample = as.character(Sample),
+    Month  = factor(Month, levels = c("March", "May", "August")),
+    Layer  = factor(
+      Layer,
+      levels = c("Ice plug", "0-25 cm", "25-50 cm", "50-75 cm", "Last 25 cm")
+    )
+  ) %>%
+  column_to_rownames("Sample")
+
+
+
+# keep samples that have metadata
+ps_beta <- prune_samples(
+  sample_names(v4.cleaned_no_blanks_no_contaminants) %in% rownames(meta_df),
+  v4.cleaned_no_blanks_no_contaminants
+)
+
+#attach metadata
+sample_data(ps_beta) <- sample_data(meta_df)
+
+#safety check (do NOT skip)
+stopifnot(
+  all(sample_names(ps_beta) == rownames(sample_data(ps_beta)))
+)
+
+
+#transform to relative abundance (best for the bray curtis plot)
+ps_beta_rel <- transform_sample_counts(ps_beta, 
+                                       function(x) x / sum(x)
+                                       )
+
+#compute the bray-curtis distance
+bray_dist <- phyloseq::distance(ps_beta_rel, method = "bray")
+
+#Perform PCoA
+pcoa_ord <- ordinate(
+  ps_beta_rel,
+  method = "PCoA",
+  distance = bray_dist
+)
+
+#extract percent variantce explained
+eig_vals <- pcoa_ord$values$Relative_eig * 100
+
+#finally plot colored ice type by layer and adjust the laael just in case
+pcoa_plot <- plot_ordination(
+  ps_beta_rel,
+  pcoa_ord,
+  color = "Layer"
+) +
+  geom_point(size = 3, alpha = 0.85) +
+  labs(
+    title = "Bray–Curtis PCoA (ASV-level)",
+    subtitle = "Colored by ice month formation",
+    x = paste0("PCoA 1 (", round(eig_vals[1], 1), "%)"),
+    y = paste0("PCoA 2 (", round(eig_vals[2], 1), "%)"),
+    color = "Ice type"
+  ) +
+  theme_classic()
+pcoa_plot
+
+plot_ordination(
+  ps_beta_rel,
+  pcoa_ord,
+  color = "Layer"
+) +
+  geom_point(aes(shape = Month), size = 3, alpha = 0.85) +
+  stat_ellipse(
+    aes(group = Month),
+    type = "t",
+    linetype = 2,
+    linewidth = 0.8,
+    alpha = 0.6
+  ) +
+  labs(
+    title = "Bray–Curtis PCoA (ASV-level)",
+    subtitle = "Ellipses represent ice formation month",
+    x = paste0("PCoA 1 (", round(eig_vals[1], 1), "%)"),
+    y = paste0("PCoA 2 (", round(eig_vals[2], 1), "%)"),
+    color = "Ice type",
+    shape = "Month"
+  ) +
+  theme_classic()
+
+
+library(vegan)
+
+adonis_res <- adonis2(
+  bray_dist ~ Layer * Month,
+  data = as(sample_data(ps_beta), "data.frame"),
+  permutations = 999,
+  by = "margin"
+)
+
+adonis_res
+
+
+library(vegan)
+
+adonis2(
+  bray_dist ~ Layer + Month,
+  data = as(sample_data(ps_beta), "data.frame"),
+  permutations = 999
+)
+
+
+################################
+### VENN #######################
+############# DIAGRAM ##########
+################################
+
+#install the package for the diagram
+install.packages("VennDiagram")
+
+#load library
+library(phyloseq)
+library(dplyr)
+library(VennDiagram)
+library(grid)   # For drawing the venn plot
+
+# Ensure sample names in phyloseq match those in sample_categories
+sample_names(v4.cleaned_no_blanks_no_contaminants) <- gsub("\\.", "-", sample_names(v4.cleaned_no_blanks_no_contaminants))
+
+# Extract the OTU table as a matrix
+otu_mat <- as(otu_table(v4.cleaned_no_blanks_no_contaminants), "matrix")
+
+# Make sure taxa are rows, samples are columns
+if (!taxa_are_rows(v4.cleaned_no_blanks_no_contaminants)) {
+  otu_mat <- t(otu_mat)
+}
+
+# Prepare sample metadata with Sample as rownames for easy subsetting
+meta <- sample_categories %>% 
+  filter(Sample %in% colnames(otu_mat)) %>%
+  column_to_rownames(var = "Sample")
+
+# Function to get ASVs present in at least one sample from a given month
+get_asvs_for_month <- function(month_name) {
+  samples_in_month <- rownames(meta)[meta$Month == month_name]
+  # Select columns for those samples
+  subset_otu <- otu_mat[, samples_in_month, drop=FALSE]
+  # ASVs present in at least one sample
+  present_asvs <- rownames(subset_otu)[rowSums(subset_otu > 0) > 0]
+  return(present_asvs)
+}
+
+# Get ASVs per month
+asvs_march <- get_asvs_for_month("March")
+asvs_may <- get_asvs_for_month("May")
+asvs_august <- get_asvs_for_month("August")
+
+# Create list for VennDiagram
+venn_list <- list(
+  March = asvs_march,
+  May = asvs_may,
+  August = asvs_august
+)
+
+venn.plot <- venn.diagram(
+  x = venn_list,
+  category.names = names(venn_list),
+  filename = NULL,
+  output = TRUE,
+  imagetype = "png",
+  height = 480,
+  width = 480,
+  resolution = 300,
+  fill = c("lightblue", "lightgreen", "lightpink"),
+  alpha = 0.5,
+  cex = 1.5,
+  fontfamily = "sans",
+  cat.cex = 1.2,
+  cat.fontfamily = "sans",
+  
+  # Play with these to adjust these for label positions:
+  cat.pos = c(90, 180, 270),  # degrees for March, May, August
+  cat.dist = c(0.06, 0.06, 0.1)  # distance of labels from circles, bigger = further away
+)
+
+grid.newpage()
+grid.draw(venn.plot)
+
+
+
+
+################## ABUNDANCEEEEEEEEEEEEEEEEEEEEEEES
+
+# ---- Load libraries ----
+library(phyloseq)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(tidyr)
+
+# ---- Step 0: Prepare your sample_groups (metadata) ----
+sample_groups <- tibble(
+  Sample = c(
+    # AUGUST
+    "C01-L1","C02-L1","C12-L1","C13-L1",
+    "C01-L2","C02-L2","C12-L2","C13-L2",
+    "C01-L3","C02-L3","C12-L3","C13-L3",
+    "C01-L4","C02-L4","C12-L4","C13-L4",
+    "C02-L5","C12-L5","C13-L5",
+    # MAY
+    "C05-L1","C21-L1","C05-L2","C21-L2",
+    "C05-L3","C21-L3","C05-L4","C21-L4",
+    "C05-L5","C21-L5",
+    # MARCH
+    "C03-L1","C04-L1","C22-L1","C23-L1",
+    "C03-L2","C04-L2","C22-L2","C23-L2",
+    "C03-L3","C04-L3","C22-L3",
+    "C03-L4","C04-L4","C22-L4","C23-L4",
+    "C03-L5","C04-L5","C22-L5","C23-L5"
+  ),
+  Month = c(
+    rep("August", 19),
+    rep("May", 10),
+    rep("March", 19)
+  ),
+  Layer = c(
+    # AUGUST
+    rep("Ice plug", 4),
+    rep("0-25 cm", 4),
+    rep("25-50 cm", 4),
+    rep("50-75 cm", 4),
+    rep("Last 25 cm", 3),
+    # MAY
+    rep("Ice plug", 2),
+    rep("0-25 cm", 2),
+    rep("25-50 cm", 2),
+    rep("50-75 cm", 2),
+    rep("Last 25 cm", 2),
+    # MARCH
+    rep("Ice plug", 4),
+    rep("0-25 cm", 4),
+    rep("25-50 cm", 3),
+    rep("50-75 cm", 4),
+    rep("Last 25 cm", 4)
+  )
+)
+
+# ---- Step 1: Add sample_groups info to phyloseq object ----
+tmp_df <- data.frame(sample_data(v4.cleaned_no_blanks_no_contaminants)) %>% 
+  rownames_to_column("Sample")
+
+joined_df <- tmp_df %>%
+  left_join(sample_groups, by = "Sample") %>%
+  filter(Sample %in% sample_names(v4.cleaned_no_blanks_no_contaminants))
+
+final_df <- joined_df %>% column_to_rownames("Sample")
+
+sample_data(v4.cleaned_no_blanks_no_contaminants) <- sample_data(final_df)
+
+# ---- Step 2: Aggregate ASV abundances by Month + Layer ----
+# Transform to relative abundance
+phy_rel <- transform_sample_counts(v4.cleaned_no_blanks_no_contaminants, function(x) x / sum(x))
+
+# Merge Month and Layer into a single variable
+sample_data(phy_rel)$Month_Layer <- paste(sample_data(phy_rel)$Month,
+                                          sample_data(phy_rel)$Layer,
+                                          sep = "_")
+
+# ---- Step 3: Summarize top 5 ASVs per Month+Layer ----
+# Get OTU table and metadata
+otu_df <- as.data.frame(otu_table(phy_rel))
+if(taxa_are_rows(phy_rel)) otu_df <- t(otu_df)
+meta_df <- data.frame(sample_data(phy_rel))
+
+otu_df$Sample <- rownames(otu_df)
+otu_long <- otu_df %>%
+  pivot_longer(-Sample, names_to = "ASV", values_to = "Abundance") %>%
+  left_join(meta_df %>% rownames_to_column("Sample"), by = "Sample") %>%
+  group_by(Month, Layer, ASV) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+# ---- Step 4: Get taxonomy ----
+tax_df <- as.data.frame(tax_table(phy_rel)) %>% rownames_to_column("ASV")
+
+# Function to get deepest taxonomic rank
+tax_df <- tax_df %>%
+  rowwise() %>%
+  mutate(
+    # Extract deepest available rank
+    Deepest = {
+      deepest_rank <- tail(na.omit(c_across(-ASV)), 1)
+      # If deepest rank is species, add genus name in parentheses
+      if(!is.na(deepest_rank) && deepest_rank != "" && !is.na(Species) && Species == deepest_rank && !is.na(Genus)) {
+        paste0(Species, " (", Genus, ")")
+      } else if (!is.na(deepest_rank)) {
+        deepest_rank
+      } else {
+        "Unassigned"
+      }
+    }
+  ) %>%
+  ungroup()
+
+
+# ---- Step 5: Merge taxonomy with abundance ----
+otu_long <- otu_long %>%
+  left_join(tax_df %>% select(ASV, Deepest), by = "ASV")
+
+# ---- Step 6: Select top 5 ASVs per Month+Layer ----
+top5_df <- otu_long %>%
+  group_by(Month, Layer) %>%
+  slice_max(order_by = Abundance, n = 5) %>%
+  ungroup()
+
+# ---- Step 7: Prepare pastel palette ----
+library(RColorBrewer)
+pal <- brewer.pal(8, "Pastel1")
+
+# ---- Step 8: Plot ----
+ggplot(top5_df, aes(x = interaction(Month, Layer, sep = " - "), 
+                    y = Abundance, 
+                    fill = Deepest)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = rep(pal, length.out = nrow(top5_df))) +
+  labs(x = "Month - Layer", y = "Relative abundance", fill = "Taxon") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+tax_table_df <- as.data.frame(tax_table(v4.cleaned_no_blanks_no_contaminants))
+summary(is.na(tax_table_df))  # How many NA values per taxonomic rank
+
+# To see which taxa are completely missing at all ranks
+missing_taxa <- apply(tax_table_df, 1, function(x) all(is.na(x)))
+table(missing_taxa)  # TRUE = missing all taxonomy
+
+
+unique(tax_table_df$Species.1)
+
+
+
+
