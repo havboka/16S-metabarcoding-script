@@ -638,3 +638,328 @@ pheatmap(
   main = "Sulfur Cycle Enzyme Predicted Abundance"
 )
 
+
+
+
+
+#-----------------------------------------------------#
+#-----------------------------------------------------#
+#-----------CLIC CONFERENCE HEATMAPS FOR TALK---------#
+#-----------------------------------------------------#
+#-----------------------------------------------------#
+
+#   MARZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+
+
+setwd("/mnt/data/home/salvatorecampanile/paprica results files")
+
+library(tidyverse)
+library(readxl)
+library(pheatmap)
+
+# ---------------------------
+# 1. Load and filter data
+# ---------------------------
+df <- read_csv("nitrogen_cycle.csv")
+
+enzymes <- c(
+  "Nitrogenase.",
+  "Nitrate reductase."
+)
+
+df_filt <- df %>% filter(Enzyme_Name %in% enzymes)
+
+# ---------------------------
+# 2. Define March samples
+# ---------------------------
+march_samples <- list(
+  L1 = c("C03-L1.", "C04-L1.", "C22-L1.", "C23-L1."),
+  L2 = c("C03-L2.", "C04-L2.", "C22-L2.", "C23-L2."),
+  L3 = c("C03-L3.", "C04-L3.", "C22-L3.", "C23-L3."),
+  L4 = c("C03-L4.", "C04-L4.", "C22-L4.", "C23-L4."),
+  L5 = c("C03-L5.", "C04-L5.", "C22-L5.", "C23-L5.")
+)
+
+# ---------------------------
+# 3. Compute mean for each depth
+# ---------------------------
+df_means <- df_filt %>%
+  mutate(
+    L1 = rowMeans(select(., all_of(march_samples$L1)), na.rm = TRUE),
+    L2 = rowMeans(select(., all_of(march_samples$L2)), na.rm = TRUE),
+    L3 = rowMeans(select(., all_of(march_samples$L3)), na.rm = TRUE),
+    L4 = rowMeans(select(., all_of(march_samples$L4)), na.rm = TRUE),
+    L5 = rowMeans(select(., all_of(march_samples$L5)), na.rm = TRUE)
+  ) %>%
+  select(Enzyme_Name, L1, L2, L3, L4, L5)
+
+# ---------------------------
+# 4. Convert to matrix
+# ---------------------------
+heatmap_matrix <- df_means %>%
+  column_to_rownames("Enzyme_Name") %>%
+  as.matrix()
+
+# transpose to have depths as rows
+heatmap_matrix <- t(heatmap_matrix)
+
+# rename rows to depth labels
+rownames(heatmap_matrix) <- c(
+  "Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "Last 25 cm"
+)
+
+# ---------------------------
+# 5. High contrast cobalt palette
+# ---------------------------
+palette <- colorRampPalette(c(
+  "#f7fbff", "#d0e6ff", "#9ec7ff", "#5b9eff", "#1f6ddf", "#0a3a8a"
+))(100)
+
+# ---------------------------
+# 6. Final heatmap (2 columns x 5 rows)
+# ---------------------------
+pheatmap(
+  heatmap_matrix,
+  color = palette,
+  border_color = "white",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  cellwidth = 70,
+  cellheight = 70,     # make cells square
+  fontsize = 12,
+  main = NA,
+  labels_col = c("Nitrogenase", "Nitrate reductase"),
+  legend = TRUE,
+  legend_position = "left",
+  show_colnames = TRUE,
+  show_rownames = TRUE,
+  
+  # ---- Add spacing between columns ----
+  gaps_col = 1,        # adds a gap after the first column
+  
+  # ---- Blank background ----
+  fontsize_row = 12,
+  fontsize_col = 12,
+  angle_col = 90,
+  bg = "white"
+)
+
+
+setwd("/mnt/data/home/salvatorecampanile/paprica results files")
+
+library(tidyverse)
+library(pheatmap)
+library(grid)
+
+# ---------------------------
+# 1. Load Nitrogen file
+# ---------------------------
+df_nitro <- read_csv("nitrogen_cycle.csv")
+
+enzymes_nitro <- c(
+  "Nitrogenase.",
+  "Nitrate reductase."
+)
+
+df_nitro <- df_nitro %>% filter(Enzyme_Name %in% enzymes_nitro)
+
+# ---------------------------
+# 2. Load Sulfur file (only Sulfite dehydrogenase)
+# ---------------------------
+df_sulf <- read_csv("sulfur_cycle.csv")
+
+enzymes_sulf <- c(
+  "Sulfite dehydrogenase (cytochrome)."
+)
+
+df_sulf <- df_sulf %>% filter(Enzyme_Name %in% enzymes_sulf)
+
+# ---------------------------
+# 3. Sample groups (March only)
+# ---------------------------
+march_samples <- list(
+  L1 = c("C03-L1.", "C04-L1.", "C22-L1.", "C23-L1."),
+  L2 = c("C03-L2.", "C04-L2.", "C22-L2.", "C23-L2."),
+  L3 = c("C03-L3.", "C04-L3.", "C22-L3.", "C23-L3."),
+  L4 = c("C03-L4.", "C04-L4.", "C22-L4.", "C23-L4."),
+  L5 = c("C03-L5.", "C04-L5.", "C22-L5.", "C23-L5.")
+)
+
+# ---------------------------
+# 4. Function to calculate means per layer
+# ---------------------------
+compute_layer_means <- function(df) {
+  out <- df %>%
+    mutate(
+      L1 = rowMeans(select(., all_of(march_samples$L1)), na.rm = TRUE),
+      L2 = rowMeans(select(., all_of(march_samples$L2)), na.rm = TRUE),
+      L3 = rowMeans(select(., all_of(march_samples$L3)), na.rm = TRUE),
+      L4 = rowMeans(select(., all_of(march_samples$L4)), na.rm = TRUE),
+      L5 = rowMeans(select(., all_of(march_samples$L5)), na.rm = TRUE)
+    ) %>%
+    select(Enzyme_Name, L1, L2, L3, L4, L5)
+  return(out)
+}
+
+# ---------------------------
+# 5. Compute means for both datasets
+# ---------------------------
+nitro_means <- compute_layer_means(df_nitro)
+sulf_means  <- compute_layer_means(df_sulf)
+
+# ---------------------------
+# 6. Combine into one matrix
+# ---------------------------
+combined <- bind_rows(sulf_means, nitro_means)
+
+heatmap_matrix <- combined %>%
+  column_to_rownames("Enzyme_Name") %>%
+  as.matrix() %>%
+  t()  # transpose so depths are rows
+
+rownames(heatmap_matrix) <- c(
+  "Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "Last 25 cm"
+)
+
+# ---------------------------
+# 7. Create high contrast cobalt palette
+# ---------------------------
+palette <- colorRampPalette(c(
+  "#f7fbff", "#d0e6ff", "#9ec7ff", "#5b9eff", "#1f6ddf", "#0a3a8a"
+))(100)
+
+# ---------------------------
+# 8. Plot heatmap (legend on left)
+# ---------------------------
+p <- pheatmap(
+  heatmap_matrix,
+  color = palette,
+  border_color = "white",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  cellwidth = 70,
+  cellheight = 70,
+  fontsize = 12,
+  main = NA,
+  labels_col = c("Sulfite dehydrogenase", "Nitrogenase", "Nitrate reductase"),
+  gaps_col = c(1,2),   # space between left column and right 2 columns
+  show_colnames = TRUE,
+  show_rownames = TRUE,
+  bg = "white"
+)
+
+
+
+
+#AGOSTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+
+
+setwd("/mnt/data/home/salvatorecampanile/paprica results files")
+
+library(tidyverse)
+library(pheatmap)
+library(grid)
+
+# ---------------------------
+# 1. Load Nitrogen file
+# ---------------------------
+df_nitro <- read_csv("nitrogen_cycle.csv")
+
+enzymes_nitro <- c(
+  "Nitrogenase.",
+  "Nitrate reductase."
+)
+
+df_nitro <- df_nitro %>% filter(Enzyme_Name %in% enzymes_nitro)
+
+# ---------------------------
+# 2. Load Sulfur file (only Sulfite dehydrogenase)
+# ---------------------------
+df_sulf <- read_csv("sulfur_cycle.csv")
+
+enzymes_sulf <- c(
+  "Sulfite dehydrogenase (cytochrome)."
+)
+
+df_sulf <- df_sulf %>% filter(Enzyme_Name %in% enzymes_sulf)
+
+# ---------------------------
+# 3. Sample groups (August only)
+# ---------------------------
+august_samples = list(
+  L1 = c("C01-L1.", "C02-L1.", "C12-L1.", "C13-L1."),
+  L2 = c("C01-L2.", "C02-L2.", "C12-L2.", "C13-L2."),
+  L3 = c("C01-L3.", "C02-L3.", "C12-L3.", "C13-L3."),
+  L4 = c("C01-L4.", "C02-L4.", "C12-L4.", "C13-L4."),
+  L5 = c("C02-L5.", "C12-L5.", "C13-L5.")
+)
+
+# ---------------------------
+# 4. Function to calculate means per layer
+# ---------------------------
+compute_layer_means <- function(df) {
+  out <- df %>%
+    mutate(
+      L1 = rowMeans(select(., all_of(august_samples$L1)), na.rm = TRUE),
+      L2 = rowMeans(select(., all_of(august_samples$L2)), na.rm = TRUE),
+      L3 = rowMeans(select(., all_of(august_samples$L3)), na.rm = TRUE),
+      L4 = rowMeans(select(., all_of(august_samples$L4)), na.rm = TRUE),
+      L5 = rowMeans(select(., all_of(august_samples$L5)), na.rm = TRUE)
+    ) %>%
+    select(Enzyme_Name, L1, L2, L3, L4, L5)
+  return(out)
+}
+
+# ---------------------------
+# 5. Compute means for both datasets
+# ---------------------------
+nitro_means <- compute_layer_means(df_nitro)
+sulf_means  <- compute_layer_means(df_sulf)
+
+# ---------------------------
+# 6. Combine into one matrix
+# ---------------------------
+combined <- bind_rows(sulf_means, nitro_means)
+
+heatmap_matrix <- combined %>%
+  column_to_rownames("Enzyme_Name") %>%
+  as.matrix() %>%
+  t()  # transpose so depths are rows
+
+rownames(heatmap_matrix) <- c(
+  "Ice plug", "0–25 cm", "25–50 cm", "50–75 cm", "Last 25 cm"
+)
+
+# ---------------------------
+# 7. Create high contrast cobalt palette
+# ---------------------------
+palette <- colorRampPalette(c(
+  "#faf7ff",  # very pale lavender (almost white)
+  "#e6ddff",  # soft lavender
+  "#c7b8ff",  # light periwinkle
+  "#9b8cff",  # lavender-blue
+  "#6f5bd7",  # muted violet
+  "#3f2a8a"   # deep lavender-purple
+))(100)
+
+# ---------------------------
+# 8. Plot heatmap (legend on left)
+# ---------------------------
+p <- pheatmap(
+  heatmap_matrix,
+  color = palette,
+  border_color = "white",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  cellwidth = 70,
+  cellheight = 70,
+  fontsize = 12,
+  main = NA,
+  labels_col = c("Sulfite dehydrogenase", "Nitrogenase", "Nitrate reductase"),
+  gaps_col = c(1,2),   # space between left column and right 2 columns
+  show_colnames = TRUE,
+  show_rownames = TRUE,
+  bg = "white"
+)
+
+
